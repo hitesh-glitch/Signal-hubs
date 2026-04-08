@@ -1192,11 +1192,15 @@ async function enrichAllPendingEvents() {
   const monitorMap = {};
   STATE.monitors.forEach(m => monitorMap[m.id] = m);
   const toEnrich = STATE.events.filter(e => {
-    const m = monitorMap[e.monitorId];
-    return m?.signalType && !e.enriched && !e.enriching && e.output;
+    return !e.enriched && !e.enriching && e.output;
   });
-  if(!toEnrich.length) return;
+  if(!toEnrich.length) {
+    log('No events to enrich (all already done or no output)', 'warn');
+    toast('Nothing to enrich — try loading events first', 'warn');
+    return;
+  }
   log(`Enriching ${toEnrich.length} events with Task API...`, 'info');
+  toast(`Enriching ${toEnrich.length} events...`, 'success');
   // Enrich up to 5 in parallel, then next batch
   for(let i = 0; i < toEnrich.length; i += 3) {
     const batch = toEnrich.slice(i, i+3);
@@ -1213,35 +1217,27 @@ async function enrichEvent(event, monitor) {
   event.enriching = true;
   renderEventsTable();
 
-  const stype = monitor?.signalType;
+  const stype = monitor?.signalType || 'auto';
   let prompt = '';
   if(stype === 'person') {
-    prompt = `From the following text, extract information about any person mentioned.
-Return ONLY a JSON object with these exact keys:
-{
-  "name": "full name of the person or null",
-  "title": "their job title or role or null",
-  "linkedin": "their LinkedIn profile URL or null",
-  "company": "company they work at or null"
-}
-If a field is not found, use null. No explanation, just JSON.
+    prompt = `From the text below, extract the most prominent person mentioned. Return ONLY a JSON object, no explanation:
+{"type":"person","name":"full name or null","title":"job title or role or null","linkedin":"LinkedIn URL or null","company":"employer company or null"}
 
-Text:
-${event.output}`;
+Text: ${event.output}`;
   } else if(stype === 'company') {
-    prompt = `From the following text, extract information about any company mentioned.
-Return ONLY a JSON object with these exact keys:
-{
-  "name": "full company name or null",
-  "domain": "company website domain (e.g. stripe.com) or null",
-  "industry": "industry/sector or null",
-  "funding": "funding amount or stage mentioned or null"
-}
-If a field is not found, use null. No explanation, just JSON.
+    prompt = `From the text below, extract the most prominent company mentioned. Return ONLY a JSON object, no explanation:
+{"type":"company","name":"company name or null","domain":"website domain like stripe.com or null","industry":"industry or sector or null","funding":"funding amount or round mentioned or null"}
 
-Text:
-${event.output}`;
-  } else return;
+Text: ${event.output}`;
+  } else {
+    // Auto mode — extract whatever is most prominent (company or person)
+    prompt = `From the text below, identify whether it is primarily about a COMPANY or a PERSON, then extract fields accordingly. Return ONLY a JSON object, no explanation, no markdown.
+
+If company: {"type":"company","name":"company name or null","domain":"website domain or null","industry":"industry or null","funding":"funding info or null"}
+If person: {"type":"person","name":"full name or null","title":"job title or null","linkedin":"LinkedIn URL or null","company":"their employer or null"}
+
+Text: ${event.output}`;
+  }
 
   try {
     const data = await apiCall('POST', '/v1/task_runs', {
@@ -1258,7 +1254,12 @@ ${event.output}`;
         // Strip markdown code fences if present
         json = json.replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/```\s*$/,'').trim();
         event.enriched = JSON.parse(json);
-        log(`Enriched event ${event.event_group_id?.slice(0,20)||'?'}: ${JSON.stringify(event.enriched).slice(0,80)}`, 'success');
+        // If monitor has no signalType, infer from what we extracted
+        if(!monitor?.signalType && event.enriched?.type) {
+          const m = STATE.monitors.find(x => x.id === event.monitorId);
+          if(m && !m.signalType) m.signalType = event.enriched.type;
+        }
+        log(`Enriched: ${JSON.stringify(event.enriched).slice(0,100)}`, 'success');
       } catch(e) {
         // Try to extract JSON from response
         const match = result.match(/\{[\s\S]+\}/);
@@ -1539,16 +1540,25 @@ function renderMonitorsTable() {
       <th>Monitor ID</th>
       <th>Query</th>
       <th>Freq</th>
+      <th>Type</th>
       <th>Status</th>
       <th>API key</th>
       <th>Created</th>
       <th>Actions</th>
     </tr></thead>
     <tbody>
-    ${STATE.monitors.map(m => `<tr>
+    ${STATE.monitors.map((m,mi) => `<tr>
       <td class="id-cell" title="${m.id}">${m.id}</td>
-      <td class="query-cell" title="${escHtml(m.query)}">${escHtml(m.query.slice(0,60))}${m.query.length>60?'…':''}</td>
+      <td class="query-cell" title="${escHtml(m.query)}">${escHtml(m.query.slice(0,55))}${m.query.length>55?'…':''}</td>
       <td><span style="font-family:var(--mono);font-size:11px;color:var(--accent);">${m.freq}</span></td>
+      <td>
+        <select style="background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;padding:3px 6px;cursor:pointer;" 
+          onchange="setMonitorType(${mi}, this.value)">
+          <option value="" ${!m.signalType?'selected':''}>auto</option>
+          <option value="person" ${m.signalType==='person'?'selected':''}>person</option>
+          <option value="company" ${m.signalType==='company'?'selected':''}>company</option>
+        </select>
+      </td>
       <td>${statusBadge(m.status)}</td>
       <td class="api-key-cell">${m.keyLabel||''}</td>
       <td class="event-date">${fmtDate(m.created_at)}</td>
@@ -1941,6 +1951,17 @@ function renderTaskResults(id) {
 // ============================================================
 // HELPERS
 // ============================================================
+function setMonitorType(idx, type) {
+  if(STATE.monitors[idx]) {
+    STATE.monitors[idx].signalType = type || '';
+    // Clear enriched cache so re-enrichment uses correct prompt
+    STATE.events.filter(e => e.monitorId === STATE.monitors[idx].id).forEach(e => { e.enriched = null; e.enriching = false; });
+    save();
+    log(`Monitor type set to "${type||'auto'}" — click ⚡ Enrich fields to re-enrich`, 'info');
+    toast(`Type set to ${type||'auto'} — click ⚡ Enrich fields`, 'success');
+  }
+}
+
 function statusBadge(status) {
   const map = {
     active: 'badge-active', running: 'badge-running', completed: 'badge-completed',
