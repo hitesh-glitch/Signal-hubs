@@ -764,7 +764,10 @@
 
       <div class="section-header">
         <span class="section-title">Signal events / results</span>
-        <button class="btn btn-ghost btn-sm" onclick="clearEvents()">Clear</button>
+        <div class="inline-actions">
+          <button class="btn btn-ghost btn-sm" onclick="enrichAllPendingEvents()" id="enrichBtn">⚡ Enrich fields</button>
+          <button class="btn btn-ghost btn-sm" onclick="clearEvents()">Clear</button>
+        </div>
       </div>
       <div id="eventsTable" class="table-wrap">
         <div class="empty-state">
@@ -1176,11 +1179,114 @@ async function loadAllEvents() {
   STATE.events = [];
   for(const m of STATE.monitors) {
     const evs = await fetchMonitorEvents(m.id, m.keyIdx);
-    evs.forEach(e => STATE.events.push({ monitorId: m.id, query: m.query, ...e }));
+    evs.forEach(e => STATE.events.push({ monitorId: m.id, query: m.query, enriched: null, enriching: false, ...e }));
   }
   log(`Loaded ${STATE.events.length} events`, 'success');
   renderEventsTable();
   save();
+  // Auto-enrich events that belong to typed monitors
+  await enrichAllPendingEvents();
+}
+
+async function enrichAllPendingEvents() {
+  const monitorMap = {};
+  STATE.monitors.forEach(m => monitorMap[m.id] = m);
+  const toEnrich = STATE.events.filter(e => {
+    const m = monitorMap[e.monitorId];
+    return m?.signalType && !e.enriched && !e.enriching && e.output;
+  });
+  if(!toEnrich.length) return;
+  log(`Enriching ${toEnrich.length} events with Task API...`, 'info');
+  // Enrich up to 5 in parallel, then next batch
+  for(let i = 0; i < toEnrich.length; i += 3) {
+    const batch = toEnrich.slice(i, i+3);
+    await Promise.all(batch.map(e => enrichEvent(e, monitorMap[e.monitorId])));
+    renderEventsTable();
+    save();
+  }
+  log('Enrichment complete', 'success');
+  toast('Events enriched!', 'success');
+}
+
+async function enrichEvent(event, monitor) {
+  if(event.enriching || event.enriched || !event.output) return;
+  event.enriching = true;
+  renderEventsTable();
+
+  const stype = monitor?.signalType;
+  let prompt = '';
+  if(stype === 'person') {
+    prompt = `From the following text, extract information about any person mentioned.
+Return ONLY a JSON object with these exact keys:
+{
+  "name": "full name of the person or null",
+  "title": "their job title or role or null",
+  "linkedin": "their LinkedIn profile URL or null",
+  "company": "company they work at or null"
+}
+If a field is not found, use null. No explanation, just JSON.
+
+Text:
+${event.output}`;
+  } else if(stype === 'company') {
+    prompt = `From the following text, extract information about any company mentioned.
+Return ONLY a JSON object with these exact keys:
+{
+  "name": "full company name or null",
+  "domain": "company website domain (e.g. stripe.com) or null",
+  "industry": "industry/sector or null",
+  "funding": "funding amount or stage mentioned or null"
+}
+If a field is not found, use null. No explanation, just JSON.
+
+Text:
+${event.output}`;
+  } else return;
+
+  try {
+    const data = await apiCall('POST', '/v1/task_runs', {
+      input: prompt,
+      processor: 'base',
+      task_spec: { output_schema: 'Return only a valid JSON object, no markdown, no explanation.' }
+    });
+    const runId = data.run_id;
+    // Poll for result
+    const result = await pollTaskForEnrichment(runId, 0);
+    if(result) {
+      try {
+        let json = result;
+        // Strip markdown code fences if present
+        json = json.replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/```\s*$/,'').trim();
+        event.enriched = JSON.parse(json);
+        log(`Enriched event ${event.event_group_id?.slice(0,20)||'?'}: ${JSON.stringify(event.enriched).slice(0,80)}`, 'success');
+      } catch(e) {
+        // Try to extract JSON from response
+        const match = result.match(/\{[\s\S]+\}/);
+        if(match) {
+          try { event.enriched = JSON.parse(match[0]); } catch(e2) { event.enriched = { raw: result }; }
+        } else {
+          event.enriched = { raw: result };
+        }
+      }
+    }
+  } catch(e) {
+    log(`Enrichment error: ${e.message}`, 'warn');
+  } finally {
+    event.enriching = false;
+  }
+}
+
+async function pollTaskForEnrichment(runId, attempts) {
+  if(attempts > 30) return null;
+  try {
+    const data = await apiCall('GET', `/v1/task_runs/${runId}/result`);
+    if(data.status === 'complete' || data.status === 'completed') {
+      return typeof data.output === 'string' ? data.output : JSON.stringify(data.output);
+    }
+    if(data.status === 'failed') return null;
+    await new Promise(r => setTimeout(r, 3000));
+    return pollTaskForEnrichment(runId, attempts+1);
+  } catch(e) { return null; }
 }
 
 // ============================================================
@@ -1462,14 +1568,17 @@ async function fetchAndShowEvents(monitorId) {
   if(!m) return;
   log(`Fetching events for ${monitorId}...`, 'info');
   const evs = await fetchMonitorEvents(monitorId, m.keyIdx);
+  let added = 0;
   evs.forEach(e => {
     if(!STATE.events.find(x => x.event_group_id === e.event_group_id)) {
-      STATE.events.push({ monitorId, query: m.query, ...e });
+      STATE.events.push({ monitorId, query: m.query, enriched: null, enriching: false, ...e });
+      added++;
     }
   });
-  log(`Got ${evs.length} events`, 'success');
+  log(`Got ${evs.length} events (${added} new)`, 'success');
   renderEventsTable();
   save();
+  if(added > 0) await enrichAllPendingEvents();
 }
 
 // ============================================================
@@ -1547,7 +1656,34 @@ function renderEventsTable() {
         : '<span style="color:var(--text-dim);font-size:11px;">—</span>';
 
       let nameCell = '—', titleCell = '—', linkedinCell = '—';
-      if(fields) {
+
+      // Prefer Task API enriched data over regex parsing
+      const enriched = e.enriched;
+      const isEnriching = e.enriching;
+
+      if(isEnriching) {
+        nameCell = '<span style="color:var(--text-dim);font-size:10px;font-family:var(--mono);">enriching…</span>';
+        titleCell = '<div class="spin" style="margin:0;"></div>';
+        linkedinCell = '—';
+      } else if(enriched) {
+        const stype = monitor?.signalType;
+        if(stype === 'person') {
+          nameCell = enriched.name ? `<span style="color:var(--text);font-weight:500;">${escHtml(enriched.name)}</span>` : '—';
+          titleCell = enriched.title ? `<span style="font-size:11px;color:var(--text-muted);">${escHtml(enriched.title)}</span>` : '—';
+          const li = enriched.linkedin;
+          linkedinCell = li && li !== 'null' && li.startsWith('http')
+            ? `<a class="event-source" href="${escHtml(li)}" target="_blank">LinkedIn ↗</a>`
+            : (li && li !== 'null' ? escHtml(li) : '—');
+        } else if(stype === 'company') {
+          nameCell = enriched.name ? `<span style="color:var(--text);font-weight:500;">${escHtml(enriched.name)}</span>` : '—';
+          const dom = enriched.domain;
+          titleCell = dom && dom !== 'null' ? `<span style="font-size:11px;color:var(--text-muted);">${escHtml(dom)}</span>` : '—';
+          const extra = enriched.funding ? `<span style="font-size:10px;color:var(--amber);margin-top:2px;display:block;">${escHtml(enriched.funding)}</span>` : '';
+          linkedinCell = dom && dom !== 'null'
+            ? `<a class="event-source" href="https://${escHtml(dom.replace(/^https?:\/\//,''))}" target="_blank">${escHtml(dom)}</a>${extra}`
+            : extra || '—';
+        }
+      } else if(fields) {
         nameCell = `<span style="color:var(--text);font-weight:500;">${escHtml(fields.name)}</span>`;
         if(fields.type === 'person') {
           titleCell = escHtml(fields.title);
@@ -1585,26 +1721,54 @@ function showEventDetail(idx) {
   const stype = monitor?.signalType;
 
   let structuredBlock = '';
-  if(fields) {
-    const rows = stype === 'person'
-      ? [
-          ['Type', '<span class="badge badge-running">person</span>'],
-          ['Name', escHtml(fields.name)],
-          ['Title / Role', escHtml(fields.title)],
-          ['LinkedIn', fields.linkedin !== '—' ? `<a class="event-source" href="${escHtml(fields.linkedin)}" target="_blank">${escHtml(fields.linkedin)}</a>` : '—'],
-        ]
-      : [
-          ['Type', '<span class="badge badge-active">company</span>'],
-          ['Company name', escHtml(fields.name)],
-          ['Domain', fields.domain !== '—' && fields.domain.startsWith('http') ? `<a class="event-source" href="${escHtml(fields.domain)}" target="_blank">${escHtml(fields.domain)}</a>` : escHtml(fields.domain)],
-        ];
+  const enriched = e.enriched;
+  const dataSource = enriched ? 'AI enriched' : (fields ? 'regex parsed' : null);
+
+  if(enriched || fields) {
+    let rows = [];
+    if(stype === 'person') {
+      const d = enriched || {};
+      const f = fields || {};
+      const name = d.name || f.name || '—';
+      const title = d.title || f.title || '—';
+      const li = d.linkedin || f.linkedin || '—';
+      const company = d.company || '—';
+      rows = [
+        ['Type', '<span class="badge badge-running">person</span>'],
+        ['Name', `<strong style="color:var(--text);">${escHtml(name)}</strong>`],
+        ['Title / Role', escHtml(title)],
+        ['Company', escHtml(company)],
+        ['LinkedIn', li && li !== '—' && li !== 'null' && li.startsWith('http')
+          ? `<a class="event-source" href="${escHtml(li)}" target="_blank">${escHtml(li)}</a>`
+          : escHtml(li)],
+      ];
+    } else if(stype === 'company') {
+      const d = enriched || {};
+      const f = fields || {};
+      const name = d.name || f.name || '—';
+      const domain = d.domain || f.domain || '—';
+      const industry = d.industry || '—';
+      const funding = d.funding || '—';
+      rows = [
+        ['Type', '<span class="badge badge-active">company</span>'],
+        ['Company name', `<strong style="color:var(--text);">${escHtml(name)}</strong>`],
+        ['Domain', domain && domain !== '—' && domain !== 'null'
+          ? `<a class="event-source" href="https://${escHtml(domain.replace(/^https?:\/\//,''))}" target="_blank">${escHtml(domain)}</a>`
+          : '—'],
+        ['Industry', escHtml(industry)],
+        ['Funding', funding !== '—' ? `<span style="color:var(--amber);">${escHtml(funding)}</span>` : '—'],
+      ];
+    }
 
     structuredBlock = `
       <div style="margin-bottom:16px;padding:12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;">
-        <div style="font-size:10px;font-family:var(--mono);color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">Extracted fields</div>
-        ${rows.map(([k,v]) => `<div style="display:flex;gap:12px;margin-bottom:6px;font-size:12px;">
-          <span style="color:var(--text-dim);min-width:100px;flex-shrink:0;">${k}</span>
-          <span style="color:var(--text);">${v}</span>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <div style="font-size:10px;font-family:var(--mono);color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;">Extracted fields</div>
+          ${dataSource ? `<span style="font-size:10px;font-family:var(--mono);color:${enriched?'var(--green)':'var(--text-dim)'};">${dataSource}</span>` : ''}
+        </div>
+        ${rows.map(([k,v]) => `<div style="display:flex;gap:12px;margin-bottom:8px;font-size:12px;align-items:flex-start;">
+          <span style="color:var(--text-dim);min-width:110px;flex-shrink:0;padding-top:1px;">${k}</span>
+          <span style="color:var(--text);word-break:break-all;">${v}</span>
         </div>`).join('')}
       </div>`;
   }
