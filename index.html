@@ -734,13 +734,17 @@
 
         <div class="form-grid-2">
           <div class="form-row">
+            <label>Signal nickname <span style="color:var(--accent);">*</span></label>
+            <input type="text" id="monitorNickname" placeholder="e.g. MedTech M&A, iRhythm Churn, Seed Funding">
+          </div>
+          <div class="form-row">
             <label>Metadata tag (optional)</label>
             <input type="text" id="monitorMeta" placeholder="e.g. campaign:iRhythm, device:Zio">
           </div>
-          <div class="form-row">
-            <label>Webhook URL (optional)</label>
-            <input type="text" id="monitorWebhook" placeholder="https://your-server.com/webhook">
-          </div>
+        </div>
+        <div class="form-row">
+          <label>Webhook URL (optional)</label>
+          <input type="text" id="monitorWebhook" placeholder="https://your-server.com/webhook">
         </div>
         <button class="btn btn-primary" id="createMonitorBtn" onclick="createMonitor()">
           Create signal
@@ -1105,6 +1109,7 @@ async function createMonitor() {
   const webhook = document.getElementById('monitorWebhook').value.trim();
   const metaStr = document.getElementById('monitorMeta').value.trim();
   const signalType = document.getElementById('monitorSignalType').value;
+  const nickname = document.getElementById('monitorNickname').value.trim() || query.slice(0,30);
 
   // Build custom fields config
   let customFields = null;
@@ -1150,6 +1155,7 @@ async function createMonitor() {
     STATE.monitors.push({
       id: data.monitor_id,
       query,
+      nickname,
       freq,
       keyIdx: idx,
       keyLabel,
@@ -1163,6 +1169,7 @@ async function createMonitor() {
     toast('Signal created!', 'success');
     document.getElementById('monitorQuery').value = '';
     document.getElementById('monitorMeta').value = '';
+    document.getElementById('monitorNickname').value = '';
     document.getElementById('monitorSignalType').value = '';
     toggleSignalTypeFields();
     renderMonitorsTable();
@@ -1237,46 +1244,96 @@ async function enrichEvent(event, monitor) {
 
   const stype = monitor?.signalType || 'auto';
 
-  // Extract company/person name from the event summary text first
   const eventText = event.output || '';
+  const sourceUrl = (event.source_urls || [])[0] || '';
   const nameGuess = extractEntityName(eventText);
 
-  // Build input for enrichment — just the name/entity is enough for Task API to web-search it
   let input, outputSchema;
+  const isCompany = stype === 'company' || (stype === 'auto' && !eventText.toLowerCase().includes('linkedin'));
 
-  if(stype === 'company' || (stype === 'auto' && !eventText.toLowerCase().includes('linkedin'))) {
-    input = nameGuess || eventText.slice(0, 200);
+  if(isCompany) {
+    // Give Task API both the company name AND the news context so it can web-search accurately
+    input = {
+      company_name: nameGuess || 'Unknown company',
+      news_context: eventText.slice(0, 500),
+      source_url: sourceUrl
+    };
     outputSchema = {
       type: 'json',
       json_schema: {
         type: 'object',
         properties: {
-          company_name:   { type: 'string', description: 'Official company name' },
-          domain:         { type: 'string', description: 'Company website domain e.g. stripe.com' },
-          industry:       { type: 'string', description: 'Industry or sector the company operates in' },
-          funding:        { type: 'string', description: 'Most recent funding amount and round e.g. $4.5M Seed' },
-          revenue:        { type: 'string', description: 'Estimated annual revenue or revenue range e.g. $10M-$50M ARR' },
-          headcount:      { type: 'string', description: 'Employee count or range e.g. 51-200 employees' },
-          hq:             { type: 'string', description: 'City and country of headquarters' }
+          company_name: {
+            type: 'string',
+            description: 'Official full company name. Search the web to confirm spelling.'
+          },
+          domain: {
+            type: 'string',
+            description: 'Company primary website domain only, e.g. "stripe.com". No https://, no trailing slash.'
+          },
+          industry: {
+            type: 'string',
+            description: 'Primary industry or sector, e.g. "AI / Machine Learning", "Biopharmaceutical", "Fintech". Be specific.'
+          },
+          funding: {
+            type: 'string',
+            description: 'Most recent funding round — include amount and round type, e.g. "$4.5M Seed" or "$137M Series B". If unknown write "Unknown".'
+          },
+          revenue: {
+            type: 'string',
+            description: 'Estimated annual revenue or ARR. Use ranges like "<$1M", "$1M-$10M", "$10M-$50M", "$50M-$100M", "$100M+". Search Crunchbase, LinkedIn, public filings. If unknown write "Unknown".'
+          },
+          headcount: {
+            type: 'string',
+            description: 'Current employee count. Use ranges: "1-10", "11-50", "51-200", "201-500", "501-1000", "1001-5000", "5000+". Search LinkedIn company page. If unknown write "Unknown".'
+          },
+          hq: {
+            type: 'string',
+            description: 'City and country of headquarters, e.g. "San Francisco, USA". If unknown write "Unknown".'
+          }
         },
         required: ['company_name','domain','industry','funding','revenue','headcount','hq'],
         additionalProperties: false
       }
     };
   } else {
-    input = nameGuess || eventText.slice(0, 200);
+    input = {
+      person_context: eventText.slice(0, 500),
+      source_url: sourceUrl
+    };
     outputSchema = {
       type: 'json',
       json_schema: {
         type: 'object',
         properties: {
-          full_name:    { type: 'string', description: 'Full name of the person' },
-          title:        { type: 'string', description: 'Current job title and role' },
-          company:      { type: 'string', description: 'Current employer company name' },
-          domain:       { type: 'string', description: 'Employer company website domain e.g. stripe.com' },
-          industry:     { type: 'string', description: 'Industry or sector of their employer' },
-          headcount:    { type: 'string', description: 'Employer employee count or range e.g. 51-200 employees' },
-          linkedin_url: { type: 'string', description: 'LinkedIn profile URL of the person' }
+          full_name: {
+            type: 'string',
+            description: 'Full name of the person. If unknown write "Unknown".'
+          },
+          title: {
+            type: 'string',
+            description: 'Current job title and seniority, e.g. "VP of Sales", "Chief Medical Officer". If unknown write "Unknown".'
+          },
+          company: {
+            type: 'string',
+            description: 'Current employer company name. If unknown write "Unknown".'
+          },
+          domain: {
+            type: 'string',
+            description: 'Employer company website domain only, e.g. "stripe.com". No https://. If unknown write "Unknown".'
+          },
+          industry: {
+            type: 'string',
+            description: 'Industry or sector of their employer, e.g. "MedTech", "SaaS". If unknown write "Unknown".'
+          },
+          headcount: {
+            type: 'string',
+            description: 'Employer employee count range: "1-10", "11-50", "51-200", "201-500", "501-1000", "1001-5000", "5000+". Search LinkedIn. If unknown write "Unknown".'
+          },
+          linkedin_url: {
+            type: 'string',
+            description: 'Full LinkedIn profile URL of the person, e.g. "https://linkedin.com/in/johndoe". If not found write "Unknown".'
+          }
         },
         required: ['full_name','title','company','domain','industry','headcount','linkedin_url'],
         additionalProperties: false
@@ -1284,13 +1341,25 @@ async function enrichEvent(event, monitor) {
     };
   }
 
-  log(`Enriching "${input.slice(0,60)}" via Task API...`, 'info');
+  log(`Enriching "${(nameGuess||eventText).slice(0,60)}" via Task API (core)...`, 'info');
 
   try {
     const createResp = await apiCall('POST', '/v1/tasks/runs', {
       input,
-      processor: 'base',
-      task_spec: { output_schema: outputSchema }
+      processor: 'core',
+      task_spec: {
+        input_schema: {
+          type: 'json',
+          json_schema: {
+            type: 'object',
+            properties: isCompany
+              ? { company_name: {type:'string'}, news_context: {type:'string'}, source_url: {type:'string'} }
+              : { person_context: {type:'string'}, source_url: {type:'string'} },
+            required: isCompany ? ['company_name','news_context'] : ['person_context']
+          }
+        },
+        output_schema: outputSchema
+      }
     });
 
     const runId = createResp.run_id;
@@ -1318,27 +1387,28 @@ async function enrichEvent(event, monitor) {
     }
 
     if(result) {
-      if(stype === 'company' || stype === 'auto') {
+      const clean = v => (!v || v === 'Unknown' || v === 'null' || v === 'N/A') ? '—' : v;
+      if(isCompany) {
         event.enriched = {
           type: 'company',
-          name: result.company_name || nameGuess || '—',
-          domain: result.domain || '—',
-          industry: result.industry || '—',
-          funding: result.funding || '—',
-          revenue: result.revenue || '—',
-          headcount: result.headcount || '—',
-          hq: result.hq || '—'
+          name:      clean(result.company_name) || nameGuess || '—',
+          domain:    clean(result.domain),
+          industry:  clean(result.industry),
+          funding:   clean(result.funding),
+          revenue:   clean(result.revenue),
+          headcount: clean(result.headcount),
+          hq:        clean(result.hq)
         };
       } else {
         event.enriched = {
           type: 'person',
-          name: result.full_name || nameGuess || '—',
-          title: result.title || '—',
-          company: result.company || '—',
-          domain: result.domain || '—',
-          industry: result.industry || '—',
-          headcount: result.headcount || '—',
-          linkedin: result.linkedin_url || '—'
+          name:      clean(result.full_name) || '—',
+          title:     clean(result.title),
+          company:   clean(result.company),
+          domain:    clean(result.domain),
+          industry:  clean(result.industry),
+          headcount: clean(result.headcount),
+          linkedin:  clean(result.linkedin_url)
         };
       }
       if(!monitor?.signalType) {
@@ -1780,6 +1850,8 @@ function extractUrl(text, keyword) {
 
 // current view: 'company' | 'person'
 let eventsView = 'company';
+let eventsPage = { company: 0, person: 0 };
+const PAGE_SIZE = 20;
 
 function setEventsView(view) {
   eventsView = view;
@@ -1794,27 +1866,40 @@ function setEventsView(view) {
   renderEventsTable();
 }
 
+function eventsGoToPage(view, page) {
+  eventsPage[view] = page;
+  renderEventsTable();
+  document.getElementById('eventsTable')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 function getEventType(e, monitorMap) {
-  const monitor = monitorMap[e.monitorId];
-  // Use enriched type first, then monitor signalType, then auto-detect from enriched data
   if(e.enriched?.type) return e.enriched.type;
+  const monitor = monitorMap[e.monitorId];
   if(monitor?.signalType && monitor.signalType !== 'auto') return monitor.signalType;
-  return 'company'; // default untyped events to company view
+  return 'company';
+}
+
+function hasUsefulData(e) {
+  // Filter out events with no output content (empty rows)
+  return e.output && e.output.trim().length > 5;
 }
 
 function renderEventsTable() {
   const el = document.getElementById('eventsTable');
-  if(!STATE.events.length) {
+  const monitorMap = {};
+  STATE.monitors.forEach(m => monitorMap[m.id] = m);
+
+  // Only show events that have actual content
+  const allWithData = STATE.events.filter(e => hasUsefulData(e));
+
+  if(!allWithData.length) {
     el.innerHTML = '<div class="empty-state"><div class="icon">◌</div>No events yet — monitors will populate this automatically</div>';
     updateEventsCount(0, 0);
     return;
   }
 
-  const monitorMap = {};
-  STATE.monitors.forEach(m => monitorMap[m.id] = m);
-
-  const companyEvents = STATE.events.filter((e,i) => getEventType(e, monitorMap) === 'company');
-  const peopleEvents  = STATE.events.filter((e,i) => getEventType(e, monitorMap) === 'person');
+  const companyEvents = allWithData.filter(e => getEventType(e, monitorMap) === 'company');
+  const peopleEvents  = allWithData.filter(e => getEventType(e, monitorMap) === 'person');
   updateEventsCount(companyEvents.length, peopleEvents.length);
 
   const filtered = eventsView === 'company' ? companyEvents : peopleEvents;
@@ -1824,16 +1909,52 @@ function renderEventsTable() {
     return;
   }
 
+  // Pagination
+  const currentPage = eventsPage[eventsView] || 0;
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const clampedPage = Math.min(currentPage, totalPages - 1);
+  if(clampedPage !== currentPage) eventsPage[eventsView] = clampedPage;
+  const pageEvents = filtered.slice(clampedPage * PAGE_SIZE, (clampedPage + 1) * PAGE_SIZE);
+
   if(eventsView === 'company') {
-    renderCompanyEvents(el, filtered, monitorMap);
+    renderCompanyEvents(el, pageEvents, monitorMap, clampedPage, totalPages, filtered.length);
   } else {
-    renderPeopleEvents(el, filtered, monitorMap);
+    renderPeopleEvents(el, pageEvents, monitorMap, clampedPage, totalPages, filtered.length);
   }
 }
 
 function updateEventsCount(c, p) {
   const el = document.getElementById('eventsCount');
   if(el) el.textContent = `${c} companies · ${p} people`;
+}
+
+function buildPagination(page, totalPages, totalCount, view) {
+  if(totalPages <= 1) return '';
+  const start = page * PAGE_SIZE + 1;
+  const end = Math.min((page + 1) * PAGE_SIZE, totalCount);
+  const pages = [];
+  // Always show first, last, current ±1
+  const visible = new Set([0, totalPages-1, page, page-1, page+1].filter(p => p >= 0 && p < totalPages));
+  let sorted = [...visible].sort((a,b)=>a-b);
+  // Add ellipsis markers
+  const withGaps = [];
+  for(let i=0;i<sorted.length;i++){
+    if(i>0 && sorted[i]-sorted[i-1]>1) withGaps.push('...');
+    withGaps.push(sorted[i]);
+  }
+  const btns = withGaps.map(p => {
+    if(p === '...') return `<span style="padding:4px 6px;color:var(--text-dim);font-size:11px;">…</span>`;
+    const active = p === page;
+    return `<button onclick="eventsGoToPage('${view}',${p})" style="padding:4px 10px;border-radius:4px;border:1px solid ${active?'var(--accent)':'var(--border)'};background:${active?'var(--accent)':'transparent'};color:${active?'#fff':'var(--text-muted)'};font-size:11px;cursor:pointer;font-family:var(--mono);">${p+1}</button>`;
+  }).join('');
+  return `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-top:1px solid var(--border);background:var(--surface2);">
+    <span style="font-size:11px;font-family:var(--mono);color:var(--text-dim);">Showing ${start}–${end} of ${totalCount}</span>
+    <div style="display:flex;align-items:center;gap:4px;">
+      <button onclick="eventsGoToPage('${view}',${page-1})" ${page===0?'disabled':''} style="padding:4px 8px;border-radius:4px;border:1px solid var(--border);background:transparent;color:${page===0?'var(--text-dim)':'var(--text-muted)'};font-size:11px;cursor:${page===0?'default':'pointer'};">‹</button>
+      ${btns}
+      <button onclick="eventsGoToPage('${view}',${page+1})" ${page>=totalPages-1?'disabled':''} style="padding:4px 8px;border-radius:4px;border:1px solid var(--border);background:transparent;color:${page>=totalPages-1?'var(--text-dim)':'var(--text-muted)'};font-size:11px;cursor:${page>=totalPages-1?'default':'pointer'};">›</button>
+    </div>
+  </div>`;
 }
 
 function getEnrichedOrFallback(e) {
@@ -1859,105 +1980,115 @@ function liLink(li) {
   return escHtml(li);
 }
 
-function renderCompanyEvents(el, events, monitorMap) {
-  // Find real index in STATE.events for detail modal
-  el.innerHTML = `<div style="overflow-x:auto;">
-  <table style="table-layout:fixed;width:100%;min-width:1100px;">
-    <thead><tr>
-      <th style="width:80px;">Type</th>
-      <th style="width:140px;">Company name</th>
-      <th style="width:130px;">Domain</th>
-      <th style="width:100px;">Revenue</th>
-      <th style="width:120px;">Funding</th>
-      <th style="width:100px;">Industry</th>
-      <th style="width:90px;">Headcount</th>
-      <th style="width:220px;">Event summary</th>
-      <th style="width:80px;">Date</th>
-      <th style="width:120px;">Source</th>
-      <th style="width:60px;">Details</th>
-    </tr></thead>
-    <tbody>
-    ${events.map(e => {
-      const realIdx = STATE.events.indexOf(e);
-      const d = getEnrichedOrFallback(e);
-      const isEnriching = e.enriching;
-      const name     = d ? (d.name    || '—') : (isEnriching ? '' : '—');
-      const domain   = d ? (d.domain  || '—') : '—';
-      const funding  = d ? (d.funding || '—') : '—';
-      const industry = d ? (d.industry|| '—') : '—';
-      const hq       = d ? (d.hq      || '—') : '—';
-      const revenue  = d ? (d.revenue || '—') : '—';
-      const headcount= d ? (d.headcount|| d.employee_count || '—') : '—';
-      return `<tr>
-        <td><span class="badge badge-active">company</span></td>
-        <td style="font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(name)}">
-          ${isEnriching ? '<span style="color:var(--text-dim);font-size:10px;font-family:var(--mono);">enriching…</span>' : escHtml(name)}
-        </td>
-        <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${isEnriching ? spinOrDash(e) : domLink(domain)}</td>
-        <td style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(revenue)}">${isEnriching ? '—' : escHtml(revenue)}</td>
-        <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-          ${isEnriching ? spinOrDash(e) : (funding !== '—' ? `<span style="color:var(--amber);font-size:11px;" title="${escHtml(funding)}">${escHtml(funding.slice(0,30))}${funding.length>30?'…':''}</span>` : '—')}
-        </td>
-        <td style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(industry)}">${isEnriching ? '—' : escHtml(industry.slice(0,20))}${industry.length>20?'…':''}</td>
-        <td style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${isEnriching ? '—' : escHtml(headcount)}</td>
-        <td class="event-output" style="overflow:hidden;" title="${escHtml(e.output||'')}">${escHtml((e.output||'').slice(0,100))}${(e.output||'').length>100?'…':''}</td>
-        <td class="event-date" style="white-space:nowrap;">${e.event_date||'—'}</td>
-        <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${(e.source_urls||[]).length ? `<a class="event-source" href="${e.source_urls[0]}" target="_blank">${shortenUrl(e.source_urls[0])}</a>` : '—'}</td>
-        <td><button class="btn btn-ghost btn-sm" onclick="showEventDetail(${realIdx})">View</button></td>
-      </tr>`;
-    }).join('')}
-    </tbody>
-  </table></div>`;
+function nicknameBadge(monitorMap, monitorId) {
+  const m = monitorMap[monitorId];
+  const nick = m?.nickname || m?.query?.slice(0,20) || '—';
+  return `<span style="display:inline-block;padding:2px 7px;border-radius:3px;font-size:10px;font-family:var(--mono);background:var(--surface3);border:1px solid var(--border);color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px;" title="${escHtml(nick)}">${escHtml(nick)}</span>`;
 }
 
-function renderPeopleEvents(el, events, monitorMap) {
+function renderCompanyEvents(el, events, monitorMap, page, totalPages, totalCount) {
+  const rows = events.map(e => {
+    const realIdx = STATE.events.indexOf(e);
+    const d = getEnrichedOrFallback(e);
+    const isEnriching = e.enriching;
+    const name      = d ? (d.name     || '—') : (isEnriching ? '' : '—');
+    const domain    = d ? (d.domain   || '—') : '—';
+    const funding   = d ? (d.funding  || '—') : '—';
+    const industry  = d ? (d.industry || '—') : '—';
+    const revenue   = d ? (d.revenue  || '—') : '—';
+    const headcount = d ? (d.headcount|| d.employee_count || '—') : '—';
+    return `<tr>
+      <td><span class="badge badge-active">company</span></td>
+      <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${nicknameBadge(monitorMap, e.monitorId)}</td>
+      <td style="font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(name)}">
+        ${isEnriching ? '<span style="color:var(--text-dim);font-size:10px;font-family:var(--mono);">enriching…</span>' : escHtml(name)}
+      </td>
+      <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${isEnriching ? spinOrDash(e) : domLink(domain)}</td>
+      <td style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(revenue)}">${isEnriching ? '—' : escHtml(revenue.slice(0,18))}${revenue.length>18&&!isEnriching?'…':''}</td>
+      <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+        ${isEnriching ? spinOrDash(e) : (funding !== '—' ? `<span style="color:var(--amber);font-size:11px;" title="${escHtml(funding)}">${escHtml(funding.slice(0,28))}${funding.length>28?'…':''}</span>` : '—')}
+      </td>
+      <td style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(industry)}">${isEnriching ? '—' : escHtml(industry.slice(0,18))}${industry.length>18&&!isEnriching?'…':''}</td>
+      <td style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${isEnriching ? '—' : escHtml(headcount)}</td>
+      <td class="event-output" style="overflow:hidden;" title="${escHtml(e.output||'')}">${escHtml((e.output||'').slice(0,90))}${(e.output||'').length>90?'…':''}</td>
+      <td class="event-date" style="white-space:nowrap;">${e.event_date||'—'}</td>
+      <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${(e.source_urls||[]).length ? `<a class="event-source" href="${e.source_urls[0]}" target="_blank">${shortenUrl(e.source_urls[0])}</a>` : '—'}</td>
+      <td><button class="btn btn-ghost btn-sm" onclick="showEventDetail(${realIdx})">View</button></td>
+    </tr>`;
+  }).join('');
+
   el.innerHTML = `<div style="overflow-x:auto;">
   <table style="table-layout:fixed;width:100%;min-width:1200px;">
     <thead><tr>
       <th style="width:70px;">Type</th>
-      <th style="width:130px;">Name</th>
-      <th style="width:130px;">Title</th>
-      <th style="width:110px;">LinkedIn</th>
-      <th style="width:120px;">Company</th>
-      <th style="width:110px;">Domain</th>
-      <th style="width:90px;">Industry</th>
-      <th style="width:80px;">Headcount</th>
+      <th style="width:120px;">Signal</th>
+      <th style="width:130px;">Company name</th>
+      <th style="width:120px;">Domain</th>
+      <th style="width:100px;">Revenue</th>
+      <th style="width:120px;">Funding</th>
+      <th style="width:95px;">Industry</th>
+      <th style="width:85px;">Headcount</th>
       <th style="width:200px;">Event summary</th>
-      <th style="width:80px;">Date</th>
+      <th style="width:75px;">Date</th>
       <th style="width:110px;">Source</th>
-      <th style="width:60px;">Details</th>
+      <th style="width:55px;">Details</th>
     </tr></thead>
-    <tbody>
-    ${events.map(e => {
-      const realIdx = STATE.events.indexOf(e);
-      const d = getEnrichedOrFallback(e);
-      const isEnriching = e.enriching;
-      const name      = d ? (d.name || d.full_name || '—') : (isEnriching ? '' : '—');
-      const title     = d ? (d.title || '—') : '—';
-      const linkedin  = d ? (d.linkedin || d.linkedin_url || '—') : '—';
-      const company   = d ? (d.company || '—') : '—';
-      const domain    = d ? (d.domain || '—') : '—';
-      const industry  = d ? (d.industry || '—') : '—';
-      const headcount = d ? (d.headcount || d.employee_count || '—') : '—';
-      return `<tr>
-        <td><span class="badge badge-running">person</span></td>
-        <td style="font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(name)}">
-          ${isEnriching ? '<span style="color:var(--text-dim);font-size:10px;font-family:var(--mono);">enriching…</span>' : escHtml(name)}
-        </td>
-        <td style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(title)}">${isEnriching ? spinOrDash(e) : escHtml(title.slice(0,30))}${title.length>30&&!isEnriching?'…':''}</td>
-        <td>${isEnriching ? spinOrDash(e) : liLink(linkedin)}</td>
-        <td style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(company)}">${isEnriching ? '—' : escHtml(company.slice(0,25))}${company.length>25&&!isEnriching?'…':''}</td>
-        <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${isEnriching ? '—' : domLink(domain)}</td>
-        <td style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${isEnriching ? '—' : escHtml(industry.slice(0,18))}${industry.length>18&&!isEnriching?'…':''}</td>
-        <td style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${isEnriching ? '—' : escHtml(headcount)}</td>
-        <td class="event-output" style="overflow:hidden;" title="${escHtml(e.output||'')}">${escHtml((e.output||'').slice(0,90))}${(e.output||'').length>90?'…':''}</td>
-        <td class="event-date" style="white-space:nowrap;">${e.event_date||'—'}</td>
-        <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${(e.source_urls||[]).length ? `<a class="event-source" href="${e.source_urls[0]}" target="_blank">${shortenUrl(e.source_urls[0])}</a>` : '—'}</td>
-        <td><button class="btn btn-ghost btn-sm" onclick="showEventDetail(${realIdx})">View</button></td>
-      </tr>`;
-    }).join('')}
-    </tbody>
-  </table></div>`;
+    <tbody>${rows}</tbody>
+  </table></div>
+  ${buildPagination(page, totalPages, totalCount, 'company')}`;
+}
+
+function renderPeopleEvents(el, events, monitorMap, page, totalPages, totalCount) {
+  const rows = events.map(e => {
+    const realIdx = STATE.events.indexOf(e);
+    const d = getEnrichedOrFallback(e);
+    const isEnriching = e.enriching;
+    const name      = d ? (d.name || d.full_name || '—') : (isEnriching ? '' : '—');
+    const title     = d ? (d.title || '—') : '—';
+    const linkedin  = d ? (d.linkedin || d.linkedin_url || '—') : '—';
+    const company   = d ? (d.company || '—') : '—';
+    const domain    = d ? (d.domain || '—') : '—';
+    const industry  = d ? (d.industry || '—') : '—';
+    const headcount = d ? (d.headcount || d.employee_count || '—') : '—';
+    return `<tr>
+      <td><span class="badge badge-running">person</span></td>
+      <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${nicknameBadge(monitorMap, e.monitorId)}</td>
+      <td style="font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(name)}">
+        ${isEnriching ? '<span style="color:var(--text-dim);font-size:10px;font-family:var(--mono);">enriching…</span>' : escHtml(name)}
+      </td>
+      <td style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(title)}">${isEnriching ? spinOrDash(e) : escHtml(title.slice(0,28))}${title.length>28&&!isEnriching?'…':''}</td>
+      <td>${isEnriching ? spinOrDash(e) : liLink(linkedin)}</td>
+      <td style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(company)}">${isEnriching ? '—' : escHtml(company.slice(0,22))}${company.length>22&&!isEnriching?'…':''}</td>
+      <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${isEnriching ? '—' : domLink(domain)}</td>
+      <td style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${isEnriching ? '—' : escHtml(industry.slice(0,16))}${industry.length>16&&!isEnriching?'…':''}</td>
+      <td style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${isEnriching ? '—' : escHtml(headcount)}</td>
+      <td class="event-output" style="overflow:hidden;" title="${escHtml(e.output||'')}">${escHtml((e.output||'').slice(0,80))}${(e.output||'').length>80?'…':''}</td>
+      <td class="event-date" style="white-space:nowrap;">${e.event_date||'—'}</td>
+      <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${(e.source_urls||[]).length ? `<a class="event-source" href="${e.source_urls[0]}" target="_blank">${shortenUrl(e.source_urls[0])}</a>` : '—'}</td>
+      <td><button class="btn btn-ghost btn-sm" onclick="showEventDetail(${realIdx})">View</button></td>
+    </tr>`;
+  }).join('');
+
+  el.innerHTML = `<div style="overflow-x:auto;">
+  <table style="table-layout:fixed;width:100%;min-width:1280px;">
+    <thead><tr>
+      <th style="width:65px;">Type</th>
+      <th style="width:110px;">Signal</th>
+      <th style="width:120px;">Name</th>
+      <th style="width:120px;">Title</th>
+      <th style="width:100px;">LinkedIn</th>
+      <th style="width:110px;">Company</th>
+      <th style="width:100px;">Domain</th>
+      <th style="width:85px;">Industry</th>
+      <th style="width:80px;">Headcount</th>
+      <th style="width:190px;">Event summary</th>
+      <th style="width:75px;">Date</th>
+      <th style="width:100px;">Source</th>
+      <th style="width:55px;">Details</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>
+  ${buildPagination(page, totalPages, totalCount, 'person')}`;
 }
 function showEventDetail(idx) {
   const e = STATE.events[idx];
