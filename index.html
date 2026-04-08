@@ -1240,7 +1240,7 @@ Text: ${event.output}`;
   }
 
   try {
-    const data = await apiCall('POST', '/v1/task_runs', {
+    const data = await apiCall('POST', '/v1/tasks/runs', {
       input: prompt,
       processor: 'base',
       task_spec: { output_schema: 'Return only a valid JSON object, no markdown, no explanation.' }
@@ -1280,7 +1280,7 @@ Text: ${event.output}`;
 async function pollTaskForEnrichment(runId, attempts) {
   if(attempts > 30) return null;
   try {
-    const data = await apiCall('GET', `/v1/task_runs/${runId}/result`);
+    const data = await apiCall('GET', `/v1/tasks/runs/${runId}/result`);
     if(data.status === 'complete' || data.status === 'completed') {
       return typeof data.output === 'string' ? data.output : JSON.stringify(data.output);
     }
@@ -1466,7 +1466,7 @@ async function createTask() {
   try {
     const body = { input, processor };
     if(outputSchema) body.task_spec = { output_schema: outputSchema };
-    const data = await apiCall('POST', '/v1/task_runs', body);
+    const data = await apiCall('POST', '/v1/tasks/runs', body);
     const { idx } = getActiveKey();
     STATE.taskRuns.push({
       id: data.run_id,
@@ -1496,7 +1496,7 @@ async function createTask() {
 async function pollTask(id, attempts = 0) {
   if(attempts > 120) { log(`Task ${id} polling timed out`, 'warn'); return; }
   try {
-    const data = await apiCall('GET', `/v1/task_runs/${id}/result`);
+    const data = await apiCall('GET', `/v1/tasks/runs/${id}/result`);
     const run = STATE.taskRuns.find(r => r.id === id);
     if(data.status === 'complete' || data.status === 'completed') {
       if(run) { run.status = 'completed'; run.output = data.output; }
