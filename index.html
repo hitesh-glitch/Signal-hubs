@@ -1,0 +1,1673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Parallel Signal Hub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --surface2: #18181f;
+    --surface3: #1e1e28;
+    --border: rgba(255,255,255,0.08);
+    --border-hover: rgba(255,255,255,0.15);
+    --accent: #6366f1;
+    --accent-dim: rgba(99,102,241,0.15);
+    --accent-glow: rgba(99,102,241,0.3);
+    --green: #10b981;
+    --green-dim: rgba(16,185,129,0.15);
+    --amber: #f59e0b;
+    --amber-dim: rgba(245,158,11,0.15);
+    --red: #ef4444;
+    --red-dim: rgba(239,68,68,0.15);
+    --text: #e8e8f0;
+    --text-muted: rgba(232,232,240,0.5);
+    --text-dim: rgba(232,232,240,0.3);
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'Inter', sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* TOP BAR */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    height: 52px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .topbar-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--accent);
+    letter-spacing: 0.05em;
+  }
+  .brand-dot {
+    width: 8px; height: 8px;
+    background: var(--accent);
+    border-radius: 50%;
+    box-shadow: 0 0 8px var(--accent-glow);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+  .topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .api-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text-muted);
+  }
+  .api-badge .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--text-dim);
+  }
+  .api-badge.active .dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .api-badge.exhausted .dot { background: var(--red); }
+
+  /* LAYOUT */
+  .layout { display: flex; flex: 1; overflow: hidden; }
+
+  /* SIDEBAR */
+  .sidebar {
+    width: 280px;
+    min-width: 280px;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .sidebar-section {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+
+  /* KEY MANAGER */
+  .key-slot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 5px;
+    margin-bottom: 4px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: all 0.15s;
+    position: relative;
+  }
+  .key-slot:hover { background: var(--surface2); border-color: var(--border); }
+  .key-slot.is-active { background: var(--accent-dim); border-color: var(--accent); }
+  .key-slot.is-exhausted { opacity: 0.4; }
+  .key-index {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    min-width: 16px;
+  }
+  .key-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    min-width: 0;
+  }
+  .key-input::placeholder { color: var(--text-dim); }
+  .key-status-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--text-dim);
+  }
+  .key-status-dot.ok { background: var(--green); }
+  .key-status-dot.exhausted { background: var(--red); }
+  .key-status-dot.active { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+
+  .active-key-display {
+    margin-top: 8px;
+    padding: 6px 8px;
+    background: var(--accent-dim);
+    border: 1px solid rgba(99,102,241,0.3);
+    border-radius: 5px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--accent);
+  }
+
+  /* FORM ELEMENTS */
+  input[type="text"], input[type="password"], select, textarea {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 12px;
+    padding: 8px 10px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  input[type="text"]:focus, input[type="password"]:focus, select:focus, textarea:focus {
+    border-color: var(--accent);
+  }
+  textarea { resize: vertical; min-height: 72px; line-height: 1.5; }
+  select option { background: var(--surface2); }
+  label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 5px; font-weight: 500; }
+
+  .form-row { margin-bottom: 12px; }
+  .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-radius: 5px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .btn-primary:hover { background: #5254d4; }
+  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-muted);
+    border-color: var(--border);
+  }
+  .btn-ghost:hover { background: var(--surface2); border-color: var(--border-hover); color: var(--text); }
+  .btn-danger {
+    background: transparent;
+    color: var(--red);
+    border-color: rgba(239,68,68,0.3);
+  }
+  .btn-danger:hover { background: var(--red-dim); }
+  .btn-sm { padding: 4px 10px; font-size: 11px; }
+  .btn-full { width: 100%; justify-content: center; }
+
+  /* TABS */
+  .tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    padding: 0 24px;
+  }
+  .tab {
+    padding: 12px 16px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* MAIN CONTENT */
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .panel {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+    display: none;
+  }
+  .panel.active { display: block; }
+
+  /* MONITOR PANEL */
+  .create-signal-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 24px;
+  }
+  .card-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+
+  /* SIGNALS TABLE */
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .section-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+  }
+
+  .table-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 24px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  th {
+    padding: 10px 14px;
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+    white-space: nowrap;
+  }
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--surface2); }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .badge-active { background: var(--green-dim); color: var(--green); }
+  .badge-running { background: var(--accent-dim); color: var(--accent); }
+  .badge-completed { background: rgba(99,102,241,0.1); color: #a5b4fc; }
+  .badge-error { background: var(--red-dim); color: var(--red); }
+  .badge-pending { background: var(--amber-dim); color: var(--amber); }
+  .badge-paused { background: rgba(255,255,255,0.05); color: var(--text-dim); }
+
+  .query-cell {
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+  }
+  .id-cell {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .api-key-cell {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--accent);
+  }
+
+  /* EVENTS / RESULTS TABLE */
+  .event-source {
+    font-size: 10px;
+    color: var(--accent);
+    font-family: var(--mono);
+    word-break: break-all;
+  }
+  .event-output { color: var(--text); font-size: 12px; line-height: 1.5; }
+  .event-date { font-family: var(--mono); font-size: 10px; color: var(--text-dim); white-space: nowrap; }
+
+  /* FINDALL RESULTS */
+  .candidate-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    transition: border-color 0.15s;
+  }
+  .candidate-card:hover { border-color: var(--border-hover); }
+  .candidate-name { font-weight: 500; font-size: 13px; color: var(--text); margin-bottom: 4px; }
+  .candidate-desc { font-size: 12px; color: var(--text-muted); line-height: 1.5; margin-bottom: 8px; }
+  .candidate-meta { display: flex; gap: 12px; font-size: 11px; color: var(--text-dim); font-family: var(--mono); }
+  .candidate-url { color: var(--accent); font-size: 11px; font-family: var(--mono); text-decoration: none; }
+  .candidate-url:hover { text-decoration: underline; }
+
+  /* LOG / CONSOLE */
+  .log-panel {
+    height: 140px;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 10px 16px;
+    font-family: var(--mono);
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+  .log-line { color: var(--text-dim); margin-bottom: 2px; line-height: 1.5; }
+  .log-line .log-time { color: var(--text-dim); margin-right: 8px; }
+  .log-line.info .log-msg { color: var(--text-muted); }
+  .log-line.success .log-msg { color: var(--green); }
+  .log-line.warn .log-msg { color: var(--amber); }
+  .log-line.error .log-msg { color: var(--red); }
+  .log-line.switch .log-msg { color: var(--accent); }
+
+  /* EMPTY STATE */
+  .empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+  .empty-state .icon { font-size: 28px; margin-bottom: 10px; opacity: 0.5; }
+
+  /* TOAST */
+  .toast-container {
+    position: fixed;
+    top: 64px;
+    right: 20px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+  }
+  .toast {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: var(--text);
+    max-width: 320px;
+    animation: slideIn 0.2s ease;
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .toast.success { border-color: rgba(16,185,129,0.4); }
+  .toast.error { border-color: rgba(239,68,68,0.4); color: var(--red); }
+  .toast.warn { border-color: rgba(245,158,11,0.4); color: var(--amber); }
+  @keyframes slideIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+
+  /* MODAL */
+  .modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    display: none;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px;
+    width: 90%;
+    max-width: 560px;
+    max-height: 80vh;
+    overflow-y: auto;
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+  }
+  .modal-title { font-size: 14px; font-weight: 600; color: var(--text); }
+  .modal-close {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    padding: 4px;
+  }
+  .modal-close:hover { color: var(--text); }
+
+  /* DIVIDER */
+  .divider { height: 1px; background: var(--border); margin: 16px 0; }
+
+  /* CREDIT BAR */
+  .credit-bar-wrap { margin-bottom: 4px; }
+  .credit-bar-track {
+    height: 3px;
+    background: var(--surface3);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .credit-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--green);
+    transition: width 0.3s;
+  }
+  .credit-bar-fill.warn { background: var(--amber); }
+  .credit-bar-fill.critical { background: var(--red); }
+
+  /* SPINNER */
+  .spin {
+    display: inline-block;
+    width: 12px; height: 12px;
+    border: 2px solid rgba(255,255,255,0.2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* SCROLLBARS */
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 3px; }
+
+  /* FOOTER ACTIONS */
+  .inline-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  .stat-row {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .stat-box {
+    flex: 1;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+  }
+  .stat-val { font-size: 22px; font-weight: 600; color: var(--text); font-family: var(--mono); }
+  .stat-lbl { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.07em; margin-top: 2px; font-family: var(--mono); }
+
+  .refresh-btn { cursor: pointer; font-size: 13px; color: var(--text-dim); background: none; border: none; transition: color 0.15s; }
+  .refresh-btn:hover { color: var(--text); }
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="topbar-brand">
+    <div class="brand-dot"></div>
+    PARALLEL SIGNAL HUB
+  </div>
+  <div class="topbar-right" id="activeKeyDisplay">
+<div class="api-badge" id="topbarActiveKey">
+      <span class="dot"></span>
+      <span>no key active</span>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST CONTAINER -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- EVENT DETAIL MODAL -->
+<div class="modal-overlay" id="eventModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Event Details</span>
+      <button class="modal-close" onclick="closeModal('eventModal')">×</button>
+    </div>
+    <div id="eventModalBody"></div>
+  </div>
+</div>
+
+<!-- CANDIDATE DETAIL MODAL -->
+<div class="modal-overlay" id="candidateModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Candidate Details</span>
+      <button class="modal-close" onclick="closeModal('candidateModal')">×</button>
+    </div>
+    <div id="candidateModalBody"></div>
+  </div>
+</div>
+
+<!-- LAYOUT -->
+<div class="layout">
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <!-- API KEY MANAGER -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">API Keys (10 slots)</div>
+      <div id="keySlots"></div>
+      <div id="activeKeyInfo" style="display:none" class="active-key-display">
+        Active: <span id="activeKeyLabel">—</span>
+      </div>
+    </div>
+
+    <!-- NAVIGATION -->
+    <div class="sidebar-section">
+      <div class="sidebar-label">Tools</div>
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <button class="btn btn-ghost" onclick="switchTab('monitor')" id="nav-monitor" style="justify-content:flex-start; font-size:12px;">
+          ◉ Monitor (signals)
+        </button>
+        <button class="btn btn-ghost" onclick="switchTab('findall')" id="nav-findall" style="justify-content:flex-start; font-size:12px;">
+          ◎ FindAll (entity search)
+        </button>
+        <button class="btn btn-ghost" onclick="switchTab('task')" id="nav-task" style="justify-content:flex-start; font-size:12px;">
+          ◌ Task (research)
+        </button>
+      </div>
+    </div>
+
+    <!-- QUICK STATS -->
+    <div class="sidebar-section" style="flex:1;">
+      <div class="sidebar-label">Session stats</div>
+      <div style="display:flex; flex-direction:column; gap:8px;" id="sidebarStats">
+        <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-muted);">
+          <span>Active monitors</span>
+          <span id="statMonitors" style="font-family:var(--mono); color:var(--text);">0</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-muted);">
+          <span>FindAll runs</span>
+          <span id="statFindalls" style="font-family:var(--mono); color:var(--text);">0</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-muted);">
+          <span>Task runs</span>
+          <span id="statTasks" style="font-family:var(--mono); color:var(--text);">0</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-muted);">
+          <span>Keys exhausted</span>
+          <span id="statExhausted" style="font-family:var(--mono); color:var(--red);">0</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text-muted);">
+          <span>API switches</span>
+          <span id="statSwitches" style="font-family:var(--mono); color:var(--accent);">0</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <button class="btn btn-ghost btn-full btn-sm" onclick="clearStorage()">
+        Clear saved data
+      </button>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="tabs">
+      <div class="tab active" id="tab-monitor" onclick="switchTab('monitor')">Monitor</div>
+      <div class="tab" id="tab-findall" onclick="switchTab('findall')">FindAll</div>
+      <div class="tab" id="tab-task" onclick="switchTab('task')">Task</div>
+    </div>
+
+    <!-- MONITOR PANEL -->
+    <div class="panel active" id="panel-monitor">
+      <div class="create-signal-card">
+        <div class="card-title">Create Monitor Signal</div>
+        <div class="form-row">
+          <label>Query (natural language)</label>
+          <textarea id="monitorQuery" placeholder="e.g. Track M&A activity and facility expansion news in the cardiac monitoring device market"></textarea>
+        </div>
+        <div class="form-grid-2">
+          <div class="form-row">
+            <label>Frequency</label>
+            <select id="monitorFreq">
+              <option value="1h">Every 1 hour</option>
+              <option value="6h">Every 6 hours</option>
+              <option value="12h">Every 12 hours</option>
+              <option value="1d" selected>Every day</option>
+              <option value="3d">Every 3 days</option>
+              <option value="1w">Every week</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Webhook URL (optional)</label>
+            <input type="text" id="monitorWebhook" placeholder="https://your-server.com/webhook">
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Metadata tag (optional)</label>
+          <input type="text" id="monitorMeta" placeholder="e.g. campaign:iRhythm, device:Zio">
+        </div>
+        <button class="btn btn-primary" id="createMonitorBtn" onclick="createMonitor()">
+          Create signal
+        </button>
+      </div>
+
+      <div class="section-header">
+        <span class="section-title">Active signals</span>
+        <div class="inline-actions">
+          <button class="btn btn-ghost btn-sm" onclick="refreshMonitors()">↻ Refresh</button>
+          <button class="btn btn-ghost btn-sm" onclick="loadAllEvents()">Load all events</button>
+        </div>
+      </div>
+
+      <div id="monitorsTable" class="table-wrap">
+        <div class="empty-state">
+          <div class="icon">◎</div>
+          Add API keys and create your first signal
+        </div>
+      </div>
+
+      <div class="section-header">
+        <span class="section-title">Signal events / results</span>
+        <button class="btn btn-ghost btn-sm" onclick="clearEvents()">Clear</button>
+      </div>
+      <div id="eventsTable" class="table-wrap">
+        <div class="empty-state">
+          <div class="icon">◌</div>
+          Events will appear here when monitors fire
+        </div>
+      </div>
+    </div>
+
+    <!-- FINDALL PANEL -->
+    <div class="panel" id="panel-findall">
+      <div class="create-signal-card">
+        <div class="card-title">FindAll — Entity Discovery</div>
+        <div class="form-row">
+          <label>Objective (natural language)</label>
+          <textarea id="findallObjective" placeholder="e.g. FindAll hospital systems in the Southeast US that recently opened new cardiac catheterization labs"></textarea>
+        </div>
+        <div class="form-grid-2">
+          <div class="form-row">
+            <label>Generator tier</label>
+            <select id="findallGenerator">
+              <option value="preview">Preview (~10 candidates, fastest)</option>
+              <option value="base">Base (broad search)</option>
+              <option value="core" selected>Core (deep search)</option>
+              <option value="pro">Pro (most thorough)</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Match limit</label>
+            <input type="text" id="findallLimit" value="10">
+          </div>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-ghost" id="findallIngestBtn" onclick="findallIngest()">
+            1. Generate schema
+          </button>
+          <button class="btn btn-primary" id="findallRunBtn" onclick="findallRun()">
+            2. Run FindAll
+          </button>
+        </div>
+        <div id="findallSchemaPreview" style="display:none; margin-top:14px;"></div>
+      </div>
+
+      <div class="section-header">
+        <span class="section-title">FindAll runs</span>
+        <button class="btn btn-ghost btn-sm" onclick="refreshFindalls()">↻ Refresh</button>
+      </div>
+      <div id="findallRunsTable" class="table-wrap">
+        <div class="empty-state"><div class="icon">◎</div>No FindAll runs yet</div>
+      </div>
+
+      <div class="section-header">
+        <span class="section-title">Matched candidates</span>
+      </div>
+      <div id="findallResults"></div>
+    </div>
+
+    <!-- TASK PANEL -->
+    <div class="panel" id="panel-task">
+      <div class="create-signal-card">
+        <div class="card-title">Task — Web Research</div>
+        <div class="form-row">
+          <label>Input / Question</label>
+          <textarea id="taskInput" placeholder="e.g. What is the current market share and recent physician adoption trends for the Zio Monitor by iRhythm?"></textarea>
+        </div>
+        <div class="form-grid-2">
+          <div class="form-row">
+            <label>Processor tier</label>
+            <select id="taskProcessor">
+              <option value="base" selected>Base (fast)</option>
+              <option value="core">Core (balanced)</option>
+              <option value="ultra">Ultra (deep research)</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Output schema (optional)</label>
+            <input type="text" id="taskOutputSchema" placeholder="e.g. Market share %, top competitors, growth trend">
+          </div>
+        </div>
+        <button class="btn btn-primary" id="createTaskBtn" onclick="createTask()">
+          Run task
+        </button>
+      </div>
+
+      <div class="section-header">
+        <span class="section-title">Task runs</span>
+        <button class="btn btn-ghost btn-sm" onclick="refreshTasks()">↻ Refresh</button>
+      </div>
+      <div id="taskRunsTable" class="table-wrap">
+        <div class="empty-state"><div class="icon">◌</div>No task runs yet</div>
+      </div>
+
+      <div class="section-header">
+        <span class="section-title">Task results</span>
+      </div>
+      <div id="taskResults"></div>
+    </div>
+
+  </div><!-- /main -->
+</div><!-- /layout -->
+
+<!-- LOG -->
+<div class="log-panel" id="logPanel">
+  <div class="log-line info"><span class="log-time">—</span><span class="log-msg">Parallel Signal Hub ready. Add your API keys to get started.</span></div>
+</div>
+
+<script>
+// ============================================================
+// STATE
+// ============================================================
+const STATE = {
+  keys: Array(10).fill(''),         // 10 API key slots
+  exhausted: Array(10).fill(false), // which keys are exhausted
+  activeIdx: -1,                    // current active key index
+  monitors: [],                     // { id, query, freq, keyIdx, status, created_at, keyLabel }
+  events: [],                       // { monitorId, eventGroupId, output, event_date, source_urls }
+  findallRuns: [],                  // { id, objective, status, keyIdx, candidates }
+  findallSchema: null,              // last ingest schema
+  taskRuns: [],                     // { id, input, status, keyIdx, output }
+  stats: { monitors:0, findalls:0, tasks:0, exhausted:0, switches:0 }
+};
+
+// ============================================================
+// PERSISTENCE
+// ============================================================
+function save() {
+  try {
+    localStorage.setItem('psh_keys', JSON.stringify(STATE.keys));
+    localStorage.setItem('psh_exhausted', JSON.stringify(STATE.exhausted));
+    localStorage.setItem('psh_activeIdx', STATE.activeIdx);
+    localStorage.setItem('psh_monitors', JSON.stringify(STATE.monitors));
+    localStorage.setItem('psh_events', JSON.stringify(STATE.events));
+    localStorage.setItem('psh_findallRuns', JSON.stringify(STATE.findallRuns));
+    localStorage.setItem('psh_taskRuns', JSON.stringify(STATE.taskRuns));
+    localStorage.setItem('psh_stats', JSON.stringify(STATE.stats));
+  } catch(e) {}
+}
+function load() {
+  try {
+    const k = localStorage.getItem('psh_keys'); if(k) STATE.keys = JSON.parse(k);
+    const ex = localStorage.getItem('psh_exhausted'); if(ex) STATE.exhausted = JSON.parse(ex);
+    const ai = localStorage.getItem('psh_activeIdx'); if(ai!==null) STATE.activeIdx = parseInt(ai);
+    const m = localStorage.getItem('psh_monitors'); if(m) STATE.monitors = JSON.parse(m);
+    const ev = localStorage.getItem('psh_events'); if(ev) STATE.events = JSON.parse(ev);
+    const fr = localStorage.getItem('psh_findallRuns'); if(fr) STATE.findallRuns = JSON.parse(fr);
+    const tr = localStorage.getItem('psh_taskRuns'); if(tr) STATE.taskRuns = JSON.parse(tr);
+    const st = localStorage.getItem('psh_stats'); if(st) STATE.stats = JSON.parse(st);
+  } catch(e) {}
+}
+function clearStorage() {
+  if(!confirm('Clear all saved data?')) return;
+  localStorage.clear();
+  location.reload();
+}
+
+// ============================================================
+// API KEY ROTATION
+// ============================================================
+function getActiveKey() {
+  if(STATE.activeIdx >= 0 && STATE.keys[STATE.activeIdx] && !STATE.exhausted[STATE.activeIdx])
+    return { key: STATE.keys[STATE.activeIdx], idx: STATE.activeIdx };
+  return findNextKey();
+}
+function findNextKey(startFrom = 0) {
+  for(let i = startFrom; i < 10; i++) {
+    if(STATE.keys[i] && !STATE.exhausted[i]) {
+      if(STATE.activeIdx !== i) {
+        log(`Switching to API key slot ${i+1}`, 'switch');
+        STATE.stats.switches++;
+      }
+      STATE.activeIdx = i;
+      updateTopbar();
+      updateKeySlots();
+      save();
+      return { key: STATE.keys[i], idx: i };
+    }
+  }
+  return null;
+}
+function markKeyExhausted(idx) {
+  STATE.exhausted[idx] = true;
+  STATE.stats.exhausted++;
+  log(`API key slot ${idx+1} exhausted — switching...`, 'warn');
+  updateKeySlots();
+  const next = findNextKey(idx+1) || findNextKey(0);
+  if(!next) {
+    toast('All API keys exhausted!', 'error');
+    log('All API keys are exhausted. Add new keys.', 'error');
+  }
+  save();
+  updateStats();
+}
+function updateTopbar() {
+  const el = document.getElementById('topbarActiveKey');
+  const dot = el.querySelector('.dot');
+  const lbl = el.querySelector('span:last-child');
+  if(STATE.activeIdx >= 0 && STATE.keys[STATE.activeIdx]) {
+    const k = STATE.keys[STATE.activeIdx];
+    lbl.textContent = `Key ${STATE.activeIdx+1}: ${k.slice(0,6)}...${k.slice(-4)}`;
+    el.classList.add('active');
+    dot.style.background = 'var(--green)';
+    dot.style.boxShadow = '0 0 6px var(--green)';
+    document.getElementById('activeKeyInfo').style.display = 'block';
+    document.getElementById('activeKeyLabel').textContent = `Slot ${STATE.activeIdx+1}`;
+  } else {
+    lbl.textContent = 'no key active';
+    el.classList.remove('active');
+    dot.style.background = 'var(--text-dim)';
+    dot.style.boxShadow = 'none';
+    document.getElementById('activeKeyInfo').style.display = 'none';
+  }
+}
+
+// ============================================================
+// API CALL WRAPPER (with auto key rotation on 402/429)
+// ============================================================
+const PROXY_BASE = 'https://api.parallel.ai';
+
+async function apiCall(method, path, body, headers = {}) {
+  const { key, idx } = getActiveKey() || {};
+  if(!key) throw new Error('No valid API key available');
+
+  const url = `https://corsproxy.io/?url=${encodeURIComponent(PROXY_BASE + path)}`;
+  const resp = await fetch(url, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      ...headers
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+
+  if(resp.status === 402 || resp.status === 429) {
+    markKeyExhausted(idx);
+    return apiCall(method, path, body, headers); // retry with next key
+  }
+  if(!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.message || err.error?.message || `HTTP ${resp.status}`);
+  }
+  return resp.json();
+}
+
+// ============================================================
+// KEY SLOTS UI
+// ============================================================
+function buildKeySlots() {
+  const container = document.getElementById('keySlots');
+  container.innerHTML = '';
+  for(let i = 0; i < 10; i++) {
+    const slot = document.createElement('div');
+    slot.className = 'key-slot' + (STATE.activeIdx === i ? ' is-active' : '') + (STATE.exhausted[i] ? ' is-exhausted' : '');
+    slot.id = `keySlot_${i}`;
+    slot.innerHTML = `
+      <span class="key-index">${i+1}</span>
+      <input class="key-input" type="password" placeholder="pk-..." value="${STATE.keys[i]||''}" data-idx="${i}" 
+        onchange="onKeyChange(${i}, this.value)" oninput="onKeyChange(${i}, this.value)">
+      <div class="key-status-dot ${STATE.keys[i] ? (STATE.exhausted[i] ? 'exhausted' : (STATE.activeIdx===i ? 'active' : 'ok')) : ''}"></div>
+    `;
+    slot.addEventListener('click', (e) => {
+      if(e.target.tagName === 'INPUT') return;
+      if(STATE.keys[i] && !STATE.exhausted[i]) {
+        STATE.activeIdx = i;
+        updateKeySlots();
+        updateTopbar();
+        save();
+        log(`Manually switched to key slot ${i+1}`, 'switch');
+      }
+    });
+    container.appendChild(slot);
+  }
+}
+function updateKeySlots() {
+  for(let i = 0; i < 10; i++) {
+    const slot = document.getElementById(`keySlot_${i}`);
+    if(!slot) continue;
+    slot.className = 'key-slot' + (STATE.activeIdx === i ? ' is-active' : '') + (STATE.exhausted[i] ? ' is-exhausted' : '');
+    const dot = slot.querySelector('.key-status-dot');
+    dot.className = 'key-status-dot ' + (STATE.keys[i] ? (STATE.exhausted[i] ? 'exhausted' : (STATE.activeIdx===i ? 'active' : 'ok')) : '');
+  }
+}
+function onKeyChange(idx, val) {
+  STATE.keys[idx] = val.trim();
+  if(STATE.activeIdx < 0 && val.trim()) {
+    STATE.activeIdx = idx;
+    updateTopbar();
+  }
+  updateKeySlots();
+  save();
+}
+
+// ============================================================
+// TABS
+// ============================================================
+function switchTab(tab) {
+  ['monitor','findall','task'].forEach(t => {
+    document.getElementById(`panel-${t}`).classList.toggle('active', t === tab);
+    document.getElementById(`tab-${t}`).classList.toggle('active', t === tab);
+    const nav = document.getElementById(`nav-${t}`);
+    if(nav) nav.style.fontWeight = t === tab ? '600' : '400';
+  });
+}
+
+// ============================================================
+// MONITOR: CREATE
+// ============================================================
+async function createMonitor() {
+  const query = document.getElementById('monitorQuery').value.trim();
+  if(!query) { toast('Enter a query first', 'warn'); return; }
+  const freq = document.getElementById('monitorFreq').value;
+  const webhook = document.getElementById('monitorWebhook').value.trim();
+  const metaStr = document.getElementById('monitorMeta').value.trim();
+
+  const btn = document.getElementById('createMonitorBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spin"></div> Creating...';
+  log(`Creating monitor: "${query.slice(0,60)}..."`, 'info');
+
+  try {
+    const body = { query, frequency: freq };
+    if(webhook) body.webhook = { url: webhook, event_types: ['monitor.event.detected','monitor.run.completed'] };
+    if(metaStr) body.metadata = { tag: metaStr };
+
+    const data = await apiCall('POST', '/v1alpha/monitors', body);
+    const { key, idx } = getActiveKey();
+    const keyLabel = `Slot ${idx+1}`;
+    STATE.monitors.push({
+      id: data.monitor_id,
+      query,
+      freq,
+      keyIdx: idx,
+      keyLabel,
+      status: data.status || 'active',
+      created_at: data.created_at || new Date().toISOString()
+    });
+    STATE.stats.monitors++;
+    log(`Monitor created: ${data.monitor_id}`, 'success');
+    toast('Signal created!', 'success');
+    document.getElementById('monitorQuery').value = '';
+    document.getElementById('monitorMeta').value = '';
+    renderMonitorsTable();
+    updateStats();
+    save();
+  } catch(e) {
+    log(`Error creating monitor: ${e.message}`, 'error');
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = 'Create signal';
+  }
+}
+
+// ============================================================
+// MONITOR: FETCH EVENTS
+// ============================================================
+async function fetchMonitorEvents(monitorId, keyIdx) {
+  const key = STATE.keys[keyIdx];
+  if(!key) return [];
+  try {
+    const data = await apiCall('GET', `/v1alpha/monitors/${monitorId}/events`);
+    return data.events || [];
+  } catch(e) {
+    log(`Error fetching events for ${monitorId}: ${e.message}`, 'error');
+    return [];
+  }
+}
+async function loadAllEvents() {
+  log('Loading events for all monitors...', 'info');
+  STATE.events = [];
+  for(const m of STATE.monitors) {
+    const evs = await fetchMonitorEvents(m.id, m.keyIdx);
+    evs.forEach(e => STATE.events.push({ monitorId: m.id, query: m.query, ...e }));
+  }
+  log(`Loaded ${STATE.events.length} events`, 'success');
+  renderEventsTable();
+  save();
+}
+
+// ============================================================
+// MONITOR: DELETE
+// ============================================================
+async function deleteMonitor(monitorId, keyIdx) {
+  if(!confirm('Delete this monitor?')) return;
+  try {
+    await apiCall('DELETE', `/v1alpha/monitors/${monitorId}`);
+    STATE.monitors = STATE.monitors.filter(m => m.id !== monitorId);
+    STATE.events = STATE.events.filter(e => e.monitorId !== monitorId);
+    log(`Monitor ${monitorId} deleted`, 'success');
+    toast('Monitor deleted', 'success');
+    renderMonitorsTable();
+    renderEventsTable();
+    save();
+  } catch(e) {
+    log(`Error deleting monitor: ${e.message}`, 'error');
+    toast(e.message, 'error');
+  }
+}
+
+// ============================================================
+// MONITOR: REFRESH
+// ============================================================
+async function refreshMonitors() {
+  log('Refreshing monitor statuses...', 'info');
+  for(const m of STATE.monitors) {
+    try {
+      const data = await apiCall('GET', `/v1alpha/monitors/${m.id}`);
+      m.status = data.status || m.status;
+    } catch(e) {}
+  }
+  renderMonitorsTable();
+  save();
+}
+
+// ============================================================
+// FINDALL
+// ============================================================
+async function findallIngest() {
+  const objective = document.getElementById('findallObjective').value.trim();
+  if(!objective) { toast('Enter an objective', 'warn'); return; }
+  const btn = document.getElementById('findallIngestBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spin"></div>';
+  log(`Ingesting FindAll schema: "${objective.slice(0,60)}..."`, 'info');
+  try {
+    const data = await apiCall('POST', '/v1beta/findall/ingest', { objective }, { 'parallel-beta': 'findall-2025-09-15' });
+    STATE.findallSchema = data;
+    renderFindallSchema(data);
+    log('Schema generated. Review and click Run FindAll.', 'success');
+    toast('Schema ready — review and run', 'success');
+  } catch(e) {
+    log(`Ingest error: ${e.message}`, 'error');
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '1. Generate schema';
+  }
+}
+function renderFindallSchema(data) {
+  const el = document.getElementById('findallSchemaPreview');
+  el.style.display = 'block';
+  el.innerHTML = `
+    <div style="background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:12px; font-family:var(--mono); font-size:11px; color:var(--text-muted);">
+      <div style="color:var(--text-dim); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.08em; font-size:10px;">Generated schema</div>
+      <div style="margin-bottom:4px;"><span style="color:var(--accent);">entity_type:</span> ${data.entity_type || '—'}</div>
+      <div style="color:var(--accent); margin-bottom:4px;">match_conditions:</div>
+      ${(data.match_conditions||[]).map(c => `<div style="margin-left:12px; margin-bottom:2px; color:var(--text-muted);">• ${c.name}: <span style="color:var(--text)">${c.description}</span></div>`).join('')}
+    </div>
+  `;
+}
+async function findallRun() {
+  const objective = document.getElementById('findallObjective').value.trim();
+  if(!objective) { toast('Enter an objective', 'warn'); return; }
+  const generator = document.getElementById('findallGenerator').value;
+  const matchLimit = parseInt(document.getElementById('findallLimit').value) || 10;
+  const btn = document.getElementById('findallRunBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spin"></div> Running...';
+  log(`Starting FindAll run...`, 'info');
+  try {
+    const body = {
+      objective,
+      generator,
+      match_limit: matchLimit,
+      ...(STATE.findallSchema ? {
+        entity_type: STATE.findallSchema.entity_type,
+        match_conditions: STATE.findallSchema.match_conditions
+      } : {})
+    };
+    const data = await apiCall('POST', '/v1beta/findall/runs', body, { 'parallel-beta': 'findall-2025-09-15' });
+    const { idx } = getActiveKey();
+    STATE.findallRuns.push({
+      id: data.findall_id,
+      objective,
+      generator,
+      status: 'running',
+      keyIdx: idx,
+      keyLabel: `Slot ${idx+1}`,
+      created_at: new Date().toISOString(),
+      candidates: [],
+      metrics: {}
+    });
+    STATE.stats.findalls++;
+    log(`FindAll started: ${data.findall_id}`, 'success');
+    toast('FindAll run started — polling...', 'success');
+    renderFindallRunsTable();
+    updateStats();
+    save();
+    pollFindall(data.findall_id);
+  } catch(e) {
+    log(`FindAll error: ${e.message}`, 'error');
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '2. Run FindAll';
+  }
+}
+async function pollFindall(id, attempts = 0) {
+  if(attempts > 60) { log(`FindAll ${id} polling timed out`, 'warn'); return; }
+  try {
+    const data = await apiCall('GET', `/v1beta/findall/runs/${id}`, null, { 'parallel-beta': 'findall-2025-09-15' });
+    const run = STATE.findallRuns.find(r => r.id === id);
+    if(run) {
+      run.status = data.status?.status || run.status;
+      run.metrics = data.status?.metrics || {};
+      renderFindallRunsTable();
+    }
+    if(data.status?.is_active === false) {
+      log(`FindAll ${id} completed`, 'success');
+      await fetchFindallResults(id);
+      return;
+    }
+    setTimeout(() => pollFindall(id, attempts+1), 5000);
+  } catch(e) {
+    log(`Poll error: ${e.message}`, 'error');
+  }
+}
+async function fetchFindallResults(id) {
+  try {
+    const data = await apiCall('GET', `/v1beta/findall/runs/${id}/result`, null, { 'parallel-beta': 'findall-2025-09-15' });
+    const run = STATE.findallRuns.find(r => r.id === id);
+    if(run) {
+      run.candidates = data.candidates || [];
+      run.status = data.status?.status || 'completed';
+      run.metrics = data.status?.metrics || {};
+    }
+    renderFindallRunsTable();
+    renderFindallResults(id);
+    save();
+    toast(`FindAll done — ${(data.candidates||[]).filter(c=>c.match_status==='matched').length} matches`, 'success');
+  } catch(e) {
+    log(`Result fetch error: ${e.message}`, 'error');
+  }
+}
+async function refreshFindalls() {
+  for(const run of STATE.findallRuns.filter(r => r.status === 'running')) {
+    await fetchFindallResults(run.id);
+  }
+}
+
+// ============================================================
+// TASK
+// ============================================================
+async function createTask() {
+  const input = document.getElementById('taskInput').value.trim();
+  if(!input) { toast('Enter a task input', 'warn'); return; }
+  const processor = document.getElementById('taskProcessor').value;
+  const outputSchema = document.getElementById('taskOutputSchema').value.trim();
+  const btn = document.getElementById('createTaskBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spin"></div> Running...';
+  log(`Creating task: "${input.slice(0,60)}..."`, 'info');
+  try {
+    const body = { input, processor };
+    if(outputSchema) body.task_spec = { output_schema: outputSchema };
+    const data = await apiCall('POST', '/v1/task_runs', body);
+    const { idx } = getActiveKey();
+    STATE.taskRuns.push({
+      id: data.run_id,
+      input,
+      processor,
+      status: 'running',
+      keyIdx: idx,
+      keyLabel: `Slot ${idx+1}`,
+      created_at: new Date().toISOString(),
+      output: null
+    });
+    STATE.stats.tasks++;
+    log(`Task started: ${data.run_id}`, 'success');
+    toast('Task running — polling...', 'success');
+    renderTaskRunsTable();
+    updateStats();
+    save();
+    pollTask(data.run_id);
+  } catch(e) {
+    log(`Task error: ${e.message}`, 'error');
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = 'Run task';
+  }
+}
+async function pollTask(id, attempts = 0) {
+  if(attempts > 120) { log(`Task ${id} polling timed out`, 'warn'); return; }
+  try {
+    const data = await apiCall('GET', `/v1/task_runs/${id}/result`);
+    const run = STATE.taskRuns.find(r => r.id === id);
+    if(data.status === 'complete' || data.status === 'completed') {
+      if(run) { run.status = 'completed'; run.output = data.output; }
+      log(`Task ${id} completed`, 'success');
+      renderTaskRunsTable();
+      renderTaskResults(id);
+      save();
+      toast('Task complete!', 'success');
+      return;
+    }
+    if(data.status === 'failed') {
+      if(run) run.status = 'failed';
+      log(`Task ${id} failed`, 'error');
+      renderTaskRunsTable();
+      return;
+    }
+    if(run) run.status = data.status || 'running';
+    renderTaskRunsTable();
+    setTimeout(() => pollTask(id, attempts+1), 5000);
+  } catch(e) {
+    log(`Task poll error: ${e.message}`, 'error');
+  }
+}
+async function refreshTasks() {
+  for(const run of STATE.taskRuns.filter(r => r.status === 'running')) {
+    await pollTask(run.id, 99);
+  }
+}
+
+// ============================================================
+// RENDER: MONITORS TABLE
+// ============================================================
+function renderMonitorsTable() {
+  const el = document.getElementById('monitorsTable');
+  if(!STATE.monitors.length) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">◎</div>No monitors yet</div>';
+    return;
+  }
+  el.innerHTML = `<table>
+    <thead><tr>
+      <th>Monitor ID</th>
+      <th>Query</th>
+      <th>Freq</th>
+      <th>Status</th>
+      <th>API key</th>
+      <th>Created</th>
+      <th>Actions</th>
+    </tr></thead>
+    <tbody>
+    ${STATE.monitors.map(m => `<tr>
+      <td class="id-cell" title="${m.id}">${m.id}</td>
+      <td class="query-cell" title="${escHtml(m.query)}">${escHtml(m.query.slice(0,60))}${m.query.length>60?'…':''}</td>
+      <td><span style="font-family:var(--mono);font-size:11px;color:var(--accent);">${m.freq}</span></td>
+      <td>${statusBadge(m.status)}</td>
+      <td class="api-key-cell">${m.keyLabel||''}</td>
+      <td class="event-date">${fmtDate(m.created_at)}</td>
+      <td>
+        <div class="inline-actions">
+          <button class="btn btn-ghost btn-sm" onclick="fetchAndShowEvents('${m.id}')">Events</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteMonitor('${m.id}', ${m.keyIdx})">Del</button>
+        </div>
+      </td>
+    </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+async function fetchAndShowEvents(monitorId) {
+  const m = STATE.monitors.find(x => x.id === monitorId);
+  if(!m) return;
+  log(`Fetching events for ${monitorId}...`, 'info');
+  const evs = await fetchMonitorEvents(monitorId, m.keyIdx);
+  evs.forEach(e => {
+    if(!STATE.events.find(x => x.event_group_id === e.event_group_id)) {
+      STATE.events.push({ monitorId, query: m.query, ...e });
+    }
+  });
+  log(`Got ${evs.length} events`, 'success');
+  renderEventsTable();
+  save();
+}
+
+// ============================================================
+// RENDER: EVENTS TABLE
+// ============================================================
+function renderEventsTable() {
+  const el = document.getElementById('eventsTable');
+  if(!STATE.events.length) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">◌</div>No events yet</div>';
+    return;
+  }
+  el.innerHTML = `<table>
+    <thead><tr>
+      <th>Event group ID</th>
+      <th>Monitor query</th>
+      <th>Output</th>
+      <th>Event date</th>
+      <th>Sources</th>
+      <th>Details</th>
+    </tr></thead>
+    <tbody>
+    ${STATE.events.map((e,i) => `<tr>
+      <td class="id-cell">${e.event_group_id||'—'}</td>
+      <td class="query-cell" title="${escHtml(e.query||'')}">${escHtml((e.query||'').slice(0,40))}${(e.query||'').length>40?'…':''}</td>
+      <td class="event-output">${escHtml((e.output||'').slice(0,100))}${(e.output||'').length>100?'…':''}</td>
+      <td class="event-date">${e.event_date||'—'}</td>
+      <td>${(e.source_urls||[]).length > 0 ? `<a class="event-source" href="${e.source_urls[0]}" target="_blank">${shortenUrl(e.source_urls[0])}</a>${e.source_urls.length>1?` +${e.source_urls.length-1}`:''}` : '—'}</td>
+      <td><button class="btn btn-ghost btn-sm" onclick="showEventDetail(${i})">View</button></td>
+    </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+function showEventDetail(idx) {
+  const e = STATE.events[idx];
+  document.getElementById('eventModalBody').innerHTML = `
+    <div class="form-row"><div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Event Group ID</div><div style="font-family:var(--mono);font-size:11px;color:var(--text-muted);">${e.event_group_id||'—'}</div></div>
+    <div class="form-row"><div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Monitor ID</div><div style="font-family:var(--mono);font-size:11px;color:var(--text-muted);">${e.monitorId||'—'}</div></div>
+    <div class="form-row"><div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Query</div><div style="font-size:12px;color:var(--text);">${escHtml(e.query||'')}</div></div>
+    <div class="form-row"><div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Output</div><div style="font-size:12px;color:var(--text);line-height:1.6;">${escHtml(e.output||'—')}</div></div>
+    <div class="form-row"><div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Event date</div><div style="font-family:var(--mono);font-size:11px;">${e.event_date||'—'}</div></div>
+    ${(e.source_urls||[]).length ? `<div class="form-row"><div style="font-size:11px;color:var(--text-dim);margin-bottom:6px;">Sources</div>${(e.source_urls||[]).map(u=>`<div style="margin-bottom:4px;"><a class="event-source" href="${u}" target="_blank">${escHtml(u)}</a></div>`).join('')}</div>` : ''}
+  `;
+  document.getElementById('eventModal').classList.add('open');
+}
+function clearEvents() { STATE.events = []; renderEventsTable(); save(); }
+
+// ============================================================
+// RENDER: FINDALL
+// ============================================================
+function renderFindallRunsTable() {
+  const el = document.getElementById('findallRunsTable');
+  if(!STATE.findallRuns.length) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">◎</div>No FindAll runs yet</div>';
+    return;
+  }
+  el.innerHTML = `<table>
+    <thead><tr>
+      <th>FindAll ID</th>
+      <th>Objective</th>
+      <th>Generator</th>
+      <th>Status</th>
+      <th>Candidates</th>
+      <th>Matched</th>
+      <th>API key</th>
+      <th>Actions</th>
+    </tr></thead>
+    <tbody>
+    ${STATE.findallRuns.map(r => `<tr>
+      <td class="id-cell">${r.id}</td>
+      <td class="query-cell" title="${escHtml(r.objective)}">${escHtml(r.objective.slice(0,60))}${r.objective.length>60?'…':''}</td>
+      <td><span style="font-family:var(--mono);font-size:11px;color:var(--text-muted);">${r.generator}</span></td>
+      <td>${statusBadge(r.status)}</td>
+      <td style="font-family:var(--mono);font-size:11px;">${r.metrics?.generated_candidates_count||0}</td>
+      <td style="font-family:var(--mono);font-size:11px;color:var(--green);">${r.metrics?.matched_candidates_count||0}</td>
+      <td class="api-key-cell">${r.keyLabel||''}</td>
+      <td>
+        <button class="btn btn-ghost btn-sm" onclick="renderFindallResults('${r.id}')">Results</button>
+      </td>
+    </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+function renderFindallResults(id) {
+  const run = STATE.findallRuns.find(r => r.id === id);
+  const el = document.getElementById('findallResults');
+  if(!run || !run.candidates?.length) {
+    el.innerHTML = '<div class="empty-state" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;"><div class="icon">◌</div>No candidates yet</div>';
+    return;
+  }
+  const matched = run.candidates.filter(c => c.match_status === 'matched');
+  el.innerHTML = `
+    <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px;font-family:var(--mono);">
+      Showing ${matched.length} matched of ${run.candidates.length} candidates for: <span style="color:var(--text-muted);">${escHtml(run.objective.slice(0,80))}</span>
+    </div>
+    ${matched.map((c,i) => `
+    <div class="candidate-card">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+        <div style="flex:1;">
+          <div class="candidate-name">${escHtml(c.name||'—')}</div>
+          <div class="candidate-desc">${escHtml(c.description||'')}</div>
+          <div class="candidate-meta">
+            ${c.url ? `<a class="candidate-url" href="${c.url}" target="_blank">${shortenUrl(c.url)}</a>` : ''}
+            <span>ID: ${c.candidate_id?.slice(0,20)||'—'}</span>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0;">
+          <span class="badge badge-active">matched</span>
+          <button class="btn btn-ghost btn-sm" onclick="showCandidateDetail(${STATE.findallRuns.indexOf(run)},${i})">Details</button>
+        </div>
+      </div>
+    </div>`).join('')}
+  `;
+}
+function showCandidateDetail(runIdx, candIdx) {
+  const run = STATE.findallRuns[runIdx];
+  const c = run?.candidates?.filter(x=>x.match_status==='matched')[candIdx];
+  if(!c) return;
+  const body = document.getElementById('candidateModalBody');
+  body.innerHTML = `
+    <div class="form-row"><b style="font-size:14px;color:var(--text);">${escHtml(c.name||'—')}</b></div>
+    <div class="form-row" style="font-size:12px;color:var(--text-muted);line-height:1.6;">${escHtml(c.description||'')}</div>
+    ${c.url ? `<div class="form-row"><a class="candidate-url" href="${c.url}" target="_blank">${escHtml(c.url)}</a></div>` : ''}
+    <div class="divider"></div>
+    <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.08em;">Match conditions</div>
+    ${Object.entries(c.output||{}).map(([k,v]) => `
+      <div style="margin-bottom:10px;padding:10px;background:var(--surface2);border-radius:5px;border:1px solid var(--border);">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--accent);margin-bottom:4px;">${escHtml(k)}</div>
+        <div style="font-size:12px;color:var(--text);">${escHtml(String(v.value||''))}</div>
+        <div style="margin-top:4px;">${v.is_matched ? '<span class="badge badge-active">matched</span>' : '<span class="badge badge-error">not matched</span>'}</div>
+      </div>
+    `).join('')}
+    ${(c.basis||[]).length ? `
+      <div class="divider"></div>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.08em;">Citations & reasoning</div>
+      ${c.basis.map(b => `
+        <div style="margin-bottom:10px;padding:10px;background:var(--surface2);border-radius:5px;border:1px solid var(--border);">
+          <div style="font-family:var(--mono);font-size:10px;color:var(--accent);margin-bottom:4px;">${escHtml(b.field||'')}</div>
+          <div style="font-size:12px;color:var(--text-muted);line-height:1.6;">${escHtml(b.reasoning||'')}</div>
+          ${b.confidence ? `<div style="margin-top:4px;font-family:var(--mono);font-size:10px;color:var(--text-dim);">confidence: ${b.confidence}</div>` : ''}
+          ${(b.citations||[]).map(ci => `<div style="margin-top:6px;"><a class="event-source" href="${ci.url||'#'}" target="_blank">${escHtml(ci.title||ci.url||'')}</a></div>`).join('')}
+        </div>
+      `).join('')}
+    ` : ''}
+  `;
+  document.getElementById('candidateModal').classList.add('open');
+}
+
+// ============================================================
+// RENDER: TASK
+// ============================================================
+function renderTaskRunsTable() {
+  const el = document.getElementById('taskRunsTable');
+  if(!STATE.taskRuns.length) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">◌</div>No task runs yet</div>';
+    return;
+  }
+  el.innerHTML = `<table>
+    <thead><tr>
+      <th>Run ID</th>
+      <th>Input</th>
+      <th>Processor</th>
+      <th>Status</th>
+      <th>API key</th>
+      <th>Created</th>
+      <th>Actions</th>
+    </tr></thead>
+    <tbody>
+    ${STATE.taskRuns.map(r => `<tr>
+      <td class="id-cell">${r.id}</td>
+      <td class="query-cell" title="${escHtml(r.input)}">${escHtml(r.input.slice(0,60))}${r.input.length>60?'…':''}</td>
+      <td><span style="font-family:var(--mono);font-size:11px;color:var(--text-muted);">${r.processor}</span></td>
+      <td>${statusBadge(r.status)}</td>
+      <td class="api-key-cell">${r.keyLabel||''}</td>
+      <td class="event-date">${fmtDate(r.created_at)}</td>
+      <td><button class="btn btn-ghost btn-sm" onclick="renderTaskResults('${r.id}')">Results</button></td>
+    </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+function renderTaskResults(id) {
+  const run = STATE.taskRuns.find(r => r.id === id);
+  const el = document.getElementById('taskResults');
+  if(!run || !run.output) {
+    el.innerHTML = run?.status === 'running' ?
+      `<div class="empty-state" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;"><div class="spin" style="margin:0 auto 10px;"></div>Running…</div>` :
+      `<div class="empty-state" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;"><div class="icon">◌</div>No output yet</div>`;
+    return;
+  }
+  let output = run.output;
+  if(typeof output === 'object') output = JSON.stringify(output, null, 2);
+  el.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;">
+      <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">Task output — ${run.id}</div>
+      <pre style="font-family:var(--mono);font-size:11px;color:var(--text-muted);white-space:pre-wrap;line-height:1.7;overflow-x:auto;">${escHtml(output)}</pre>
+    </div>
+  `;
+}
+
+// ============================================================
+// HELPERS
+// ============================================================
+function statusBadge(status) {
+  const map = {
+    active: 'badge-active', running: 'badge-running', completed: 'badge-completed',
+    complete: 'badge-completed', failed: 'badge-error', error: 'badge-error',
+    pending: 'badge-pending', paused: 'badge-paused'
+  };
+  const cls = map[status] || 'badge-pending';
+  return `<span class="badge ${cls}">${status||'unknown'}</span>`;
+}
+function fmtDate(d) {
+  if(!d) return '—';
+  try { return new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}); } catch(e) { return d; }
+}
+function shortenUrl(u) {
+  try { const url = new URL(u); return url.hostname + (url.pathname.length>1 ? url.pathname.slice(0,20)+'…' : ''); } catch(e) { return u.slice(0,30); }
+}
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+function updateStats() {
+  document.getElementById('statMonitors').textContent = STATE.monitors.length;
+  document.getElementById('statFindalls').textContent = STATE.findallRuns.length;
+  document.getElementById('statTasks').textContent = STATE.taskRuns.length;
+  document.getElementById('statExhausted').textContent = STATE.exhausted.filter(Boolean).length;
+  document.getElementById('statSwitches').textContent = STATE.stats.switches||0;
+}
+
+// ============================================================
+// LOG
+// ============================================================
+function log(msg, type = 'info') {
+  const panel = document.getElementById('logPanel');
+  const now = new Date().toTimeString().slice(0,8);
+  const line = document.createElement('div');
+  line.className = `log-line ${type}`;
+  line.innerHTML = `<span class="log-time">${now}</span><span class="log-msg">${escHtml(msg)}</span>`;
+  panel.appendChild(line);
+  panel.scrollTop = panel.scrollHeight;
+}
+
+// ============================================================
+// TOAST
+// ============================================================
+function toast(msg, type = 'info') {
+  const c = document.getElementById('toastContainer');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  c.appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+// ============================================================
+// INIT
+// ============================================================
+load();
+buildKeySlots();
+updateTopbar();
+renderMonitorsTable();
+renderEventsTable();
+renderFindallRunsTable();
+renderTaskRunsTable();
+updateStats();
+
+
+
+// Resume polling for running jobs
+STATE.findallRuns.filter(r => r.status === 'running').forEach(r => pollFindall(r.id));
+STATE.taskRuns.filter(r => r.status === 'running').forEach(r => pollTask(r.id));
+
+// Close modals on overlay click
+['eventModal','candidateModal'].forEach(id => {
+  document.getElementById(id).addEventListener('click', e => {
+    if(e.target.classList.contains('modal-overlay')) closeModal(id);
+  });
+});
+</script>
+</body>
+</html>
