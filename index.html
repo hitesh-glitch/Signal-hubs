@@ -1213,67 +1213,120 @@ async function enrichAllPendingEvents() {
 }
 
 async function enrichEvent(event, monitor) {
-  if(event.enriching || event.enriched || !event.output) return;
+  if(event.enriching || event.enriched) return;
+  if(!event.output) { event.enriched = {_skipped:true}; return; }
+
   event.enriching = true;
   renderEventsTable();
 
   const stype = monitor?.signalType || 'auto';
-  let prompt = '';
-  if(stype === 'person') {
-    prompt = `From the text below, extract the most prominent person mentioned. Return ONLY a JSON object, no explanation:
-{"type":"person","name":"full name or null","title":"job title or role or null","linkedin":"LinkedIn URL or null","company":"employer company or null"}
 
-Text: ${event.output}`;
-  } else if(stype === 'company') {
-    prompt = `From the text below, extract the most prominent company mentioned. Return ONLY a JSON object, no explanation:
-{"type":"company","name":"company name or null","domain":"website domain like stripe.com or null","industry":"industry or sector or null","funding":"funding amount or round mentioned or null"}
+  // Extract company/person name from the event summary text first
+  const eventText = event.output || '';
+  const nameGuess = extractEntityName(eventText);
 
-Text: ${event.output}`;
+  // Build input for enrichment — just the name/entity is enough for Task API to web-search it
+  let input, outputSchema;
+
+  if(stype === 'company' || (stype === 'auto' && !eventText.toLowerCase().includes('linkedin'))) {
+    input = nameGuess || eventText.slice(0, 200);
+    outputSchema = {
+      type: 'json',
+      json_schema: {
+        type: 'object',
+        properties: {
+          company_name:  { type: 'string', description: 'Official company name' },
+          domain:        { type: 'string', description: 'Company website domain e.g. stripe.com' },
+          industry:      { type: 'string', description: 'Industry or sector the company operates in' },
+          funding:       { type: 'string', description: 'Most recent funding amount and round e.g. $4.5M Seed' },
+          hq:            { type: 'string', description: 'City and country of headquarters' }
+        },
+        required: ['company_name','domain','industry','funding','hq'],
+        additionalProperties: false
+      }
+    };
   } else {
-    // Auto mode — extract whatever is most prominent (company or person)
-    prompt = `From the text below, identify whether it is primarily about a COMPANY or a PERSON, then extract fields accordingly. Return ONLY a JSON object, no explanation, no markdown.
-
-If company: {"type":"company","name":"company name or null","domain":"website domain or null","industry":"industry or null","funding":"funding info or null"}
-If person: {"type":"person","name":"full name or null","title":"job title or null","linkedin":"LinkedIn URL or null","company":"their employer or null"}
-
-Text: ${event.output}`;
+    input = nameGuess || eventText.slice(0, 200);
+    outputSchema = {
+      type: 'json',
+      json_schema: {
+        type: 'object',
+        properties: {
+          full_name:    { type: 'string', description: 'Full name of the person' },
+          title:        { type: 'string', description: 'Current job title and role' },
+          company:      { type: 'string', description: 'Current employer company name' },
+          linkedin_url: { type: 'string', description: 'LinkedIn profile URL' }
+        },
+        required: ['full_name','title','company','linkedin_url'],
+        additionalProperties: false
+      }
+    };
   }
 
-  try {
-    log(`Starting Task API for enrichment...`, 'info');
-    const data = await apiCall('POST', '/v1/tasks/runs', {
-      input: prompt,
-      processor: 'base'
-    });
-    const runId = data.run_id;
-    if(!runId) { log(`No run_id returned: ${JSON.stringify(data)}`, 'error'); return; }
-    log(`Enrichment task started: ${runId}`, 'info');
+  log(`Enriching "${input.slice(0,60)}" via Task API...`, 'info');
 
-    const result = await pollTaskForEnrichment(runId, 0);
-    log(`Raw enrichment result: ${String(result).slice(0,200)}`, 'info');
+  try {
+    const createResp = await apiCall('POST', '/v1/tasks/runs', {
+      input,
+      processor: 'base',
+      task_spec: { output_schema: outputSchema }
+    });
+
+    const runId = createResp.run_id;
+    if(!runId) { log(`No run_id: ${JSON.stringify(createResp).slice(0,200)}`, 'error'); return; }
+    log(`Task started: ${runId} — polling...`, 'info');
+
+    // Poll with timeout
+    let result = null;
+    for(let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 5000));
+      try {
+        const poll = await apiCall('GET', `/v1/tasks/runs/${runId}/result`);
+        log(`Poll ${i+1}: status=${poll.run?.status || poll.status}`, 'info');
+        const status = poll.run?.status || poll.status;
+        if(status === 'completed' || status === 'complete') {
+          // Result is at poll.output.content (JSON schema mode)
+          result = poll.output?.content || poll.output;
+          log(`Raw result: ${JSON.stringify(result).slice(0,300)}`, 'info');
+          break;
+        }
+        if(status === 'failed') { log(`Task failed`, 'error'); break; }
+      } catch(pollErr) {
+        log(`Poll error: ${pollErr.message}`, 'warn');
+      }
+    }
 
     if(result) {
-      try {
-        let json = result;
-        json = json.replace(/```json/gi,'').replace(/```/g,'').trim();
-        // Extract first JSON object
-        const match = json.match(/\{[\s\S]*\}/);
-        if(match) json = match[0];
-        event.enriched = JSON.parse(json);
-        if(!monitor?.signalType && event.enriched?.type) {
-          const m = STATE.monitors.find(x => x.id === event.monitorId);
-          if(m && !m.signalType) m.signalType = event.enriched.type;
-        }
-        log(`✓ Enriched: ${JSON.stringify(event.enriched).slice(0,150)}`, 'success');
-      } catch(parseErr) {
-        log(`JSON parse failed, storing raw: ${parseErr.message}`, 'warn');
-        event.enriched = { raw: result, type: monitor?.signalType || 'auto' };
+      if(stype === 'company' || stype === 'auto') {
+        event.enriched = {
+          type: 'company',
+          name: result.company_name || nameGuess || '—',
+          domain: result.domain || '—',
+          industry: result.industry || '—',
+          funding: result.funding || '—',
+          hq: result.hq || '—'
+        };
+      } else {
+        event.enriched = {
+          type: 'person',
+          name: result.full_name || nameGuess || '—',
+          title: result.title || '—',
+          company: result.company || '—',
+          linkedin: result.linkedin_url || '—'
+        };
       }
+      if(!monitor?.signalType) {
+        const m = STATE.monitors.find(x => x.id === event.monitorId);
+        if(m) m.signalType = event.enriched.type;
+      }
+      log(`✓ Enriched: ${JSON.stringify(event.enriched)}`, 'success');
     } else {
-      log(`No result returned from enrichment task`, 'warn');
+      log(`No result after polling`, 'warn');
+      event.enriched = { _failed: true };
     }
   } catch(e) {
     log(`Enrichment error: ${e.message}`, 'error');
+    event.enriched = { _error: e.message };
   } finally {
     event.enriching = false;
     renderEventsTable();
@@ -1281,33 +1334,64 @@ Text: ${event.output}`;
   }
 }
 
-async function pollTaskForEnrichment(runId, attempts) {
-  if(attempts > 40) { log(`Enrichment poll timed out for ${runId}`, 'warn'); return null; }
-  try {
-    // First check status
-    const status = await apiCall('GET', `/v1/tasks/runs/${runId}`);
-    log(`Poll ${attempts}: status=${status.status}`, 'info');
-    if(status.status === 'completed' || status.status === 'complete') {
-      // Fetch the actual result
-      const res = await apiCall('GET', `/v1/tasks/runs/${runId}/result`);
-      log(`Result response keys: ${Object.keys(res).join(', ')}`, 'info');
-      if(res.output !== undefined) {
-        return typeof res.output === 'string' ? res.output : JSON.stringify(res.output);
-      }
-      // fallback: output might be directly on status object
-      if(status.output !== undefined) {
-        return typeof status.output === 'string' ? status.output : JSON.stringify(status.output);
-      }
-      return JSON.stringify(res);
-    }
-    if(status.status === 'failed') { log(`Task failed: ${JSON.stringify(status.error||{})}`, 'error'); return null; }
-    await new Promise(r => setTimeout(r, 4000));
-    return pollTaskForEnrichment(runId, attempts+1);
-  } catch(e) {
-    log(`Poll error attempt ${attempts}: ${e.message}`, 'warn');
-    await new Promise(r => setTimeout(r, 3000));
-    return pollTaskForEnrichment(runId, attempts+1);
+// ── Text extraction helpers ──
+function extractEntityName(text) {
+  // Match "Pomo (AI marketing startup)" or "Patlytics (New York-based...)"
+  const m1 = text.match(/^([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+)?)\s*[\(\-–]/);
+  if(m1) return m1[1].trim();
+  // Match "Company raised" / "Company announced"
+  const m2 = text.match(/^([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+)?)\s+(?:raised|announced|launched|secured|has|is|was|closed)/);
+  if(m2) return m2[1].trim();
+  // First capitalized word sequence
+  const m3 = text.match(/([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+){0,2})/);
+  if(m3) return m3[1].trim();
+  return null;
+}
+
+function extractCompanyName(text) {
+  // Patterns: "Pomo", "Patlytics", company name before "announced", "raised", "launched"
+  const m = text.match(/([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+)?)\s+(?:announced|raised|launched|secured|closed|completed|has|is|was)/);
+  if(m) return m[1];
+  // From parenthetical like "(AI marketing startup)"
+  const m2 = text.match(/([A-Z][a-zA-Z0-9]+)\s*\([^)]*(?:startup|company|platform|software|inc|corp|llc)[^)]*\)/i);
+  if(m2) return m2[1];
+  return null;
+}
+function extractFunding(text) {
+  const m = text.match(/\$[\d.,]+\s*(?:million|billion|M|B|K)(?:\s+(?:Series\s+[A-Z]|seed|pre-seed|growth|round))?/i);
+  return m ? m[0] : null;
+}
+function extractIndustry(text) {
+  const industries = ['AI','fintech','healthtech','medtech','SaaS','cybersecurity','biotech','edtech','proptech','logistics','e-commerce','marketplace','developer tools','data','analytics','robotics','climate','energy','legal','HR'];
+  for(const ind of industries) {
+    if(text.toLowerCase().includes(ind.toLowerCase())) return ind;
   }
+  return null;
+}
+function extractName(text) {
+  // LinkedIn-style "FirstName LastName" patterns
+  const m = text.match(/([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)(?=\s*[-–|,]|\s+is\s|\s+at\s|\s+from\s)/);
+  return m ? m[1] : null;
+}
+function extractJobTitle(text) {
+  const m = text.match(/(?:CEO|CTO|CFO|COO|CMO|VP|SVP|EVP|Director|Manager|President|Founder|Co-founder|Partner|Head of [A-Z][a-z]+(?:\s+[A-Z][a-z]+)?|Chief [A-Z][a-z]+ Officer)/i);
+  return m ? m[0] : null;
+}
+function extractLinkedIn(text) {
+  const m = text.match(/https?:\/\/(?:www\.)?linkedin\.com\/in\/[a-zA-Z0-9_-]+\/?/i);
+  return m ? m[0] : null;
+}
+function extractDomain(url) {
+  try {
+    const u = new URL(url);
+    return u.hostname.replace(/^www\./, '');
+  } catch(e) { return null; }
+}
+function extractFromTitle(title, type) {
+  if(!title) return null;
+  // "Pomo - AI Marketing Platform" → "Pomo"
+  const m = title.match(/^([^|–\-:]+)/);
+  return m ? m[1].trim() : null;
 }
 
 // ============================================================
