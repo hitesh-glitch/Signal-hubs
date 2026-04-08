@@ -691,13 +691,56 @@
             </select>
           </div>
           <div class="form-row">
+            <label>Signal type</label>
+            <select id="monitorSignalType" onchange="toggleSignalTypeFields()">
+              <option value="">No type filter</option>
+              <option value="person">Person</option>
+              <option value="company">Company</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="personFields" style="display:none; margin-bottom:12px;">
+          <div style="font-size:10px;font-family:var(--mono);color:var(--accent);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:10px;padding:6px 10px;background:var(--accent-dim);border-radius:4px;">Person fields — extracted per event</div>
+          <div class="form-grid-2">
+            <div class="form-row">
+              <label>Name field label</label>
+              <input type="text" id="fieldPersonName" value="Full name">
+            </div>
+            <div class="form-row">
+              <label>Title / Role field label</label>
+              <input type="text" id="fieldPersonTitle" value="Job title or role">
+            </div>
+          </div>
+          <div class="form-row">
+            <label>LinkedIn URL field label</label>
+            <input type="text" id="fieldPersonLinkedin" value="LinkedIn profile URL">
+          </div>
+        </div>
+
+        <div id="companyFields" style="display:none; margin-bottom:12px;">
+          <div style="font-size:10px;font-family:var(--mono);color:var(--green);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:10px;padding:6px 10px;background:var(--green-dim);border-radius:4px;">Company fields — extracted per event</div>
+          <div class="form-grid-2">
+            <div class="form-row">
+              <label>Company name field label</label>
+              <input type="text" id="fieldCompanyName" value="Company name">
+            </div>
+            <div class="form-row">
+              <label>Domain field label</label>
+              <input type="text" id="fieldCompanyDomain" value="Company website domain">
+            </div>
+          </div>
+        </div>
+
+        <div class="form-grid-2">
+          <div class="form-row">
+            <label>Metadata tag (optional)</label>
+            <input type="text" id="monitorMeta" placeholder="e.g. campaign:iRhythm, device:Zio">
+          </div>
+          <div class="form-row">
             <label>Webhook URL (optional)</label>
             <input type="text" id="monitorWebhook" placeholder="https://your-server.com/webhook">
           </div>
-        </div>
-        <div class="form-row">
-          <label>Metadata tag (optional)</label>
-          <input type="text" id="monitorMeta" placeholder="e.g. campaign:iRhythm, device:Zio">
         </div>
         <button class="btn btn-primary" id="createMonitorBtn" onclick="createMonitor()">
           Create signal
@@ -1029,12 +1072,44 @@ function switchTab(tab) {
 // ============================================================
 // MONITOR: CREATE
 // ============================================================
+function toggleSignalTypeFields() {
+  const t = document.getElementById('monitorSignalType').value;
+  document.getElementById('personFields').style.display = t === 'person' ? 'block' : 'none';
+  document.getElementById('companyFields').style.display = t === 'company' ? 'block' : 'none';
+}
+
 async function createMonitor() {
   const query = document.getElementById('monitorQuery').value.trim();
   if(!query) { toast('Enter a query first', 'warn'); return; }
   const freq = document.getElementById('monitorFreq').value;
   const webhook = document.getElementById('monitorWebhook').value.trim();
   const metaStr = document.getElementById('monitorMeta').value.trim();
+  const signalType = document.getElementById('monitorSignalType').value;
+
+  // Build custom fields config
+  let customFields = null;
+  if(signalType === 'person') {
+    customFields = {
+      type: 'person',
+      name: document.getElementById('fieldPersonName').value.trim() || 'Full name',
+      title: document.getElementById('fieldPersonTitle').value.trim() || 'Job title or role',
+      linkedin: document.getElementById('fieldPersonLinkedin').value.trim() || 'LinkedIn profile URL',
+    };
+  } else if(signalType === 'company') {
+    customFields = {
+      type: 'company',
+      name: document.getElementById('fieldCompanyName').value.trim() || 'Company name',
+      domain: document.getElementById('fieldCompanyDomain').value.trim() || 'Company website domain',
+    };
+  }
+
+  // Augment query with structured extraction instruction
+  let finalQuery = query;
+  if(signalType === 'person') {
+    finalQuery = query + `\n\nFor each person mentioned, extract: Full name, Job title or role, LinkedIn profile URL if available.`;
+  } else if(signalType === 'company') {
+    finalQuery = query + `\n\nFor each company mentioned, extract: Company name, Website domain.`;
+  }
 
   const btn = document.getElementById('createMonitorBtn');
   btn.disabled = true;
@@ -1042,9 +1117,12 @@ async function createMonitor() {
   log(`Creating monitor: "${query.slice(0,60)}..."`, 'info');
 
   try {
-    const body = { query, frequency: freq };
+    const body = { query: finalQuery, frequency: freq };
     if(webhook) body.webhook = { url: webhook, event_types: ['monitor.event.detected','monitor.run.completed'] };
-    if(metaStr) body.metadata = { tag: metaStr };
+    const meta = {};
+    if(metaStr) meta.tag = metaStr;
+    if(signalType) meta.signalType = signalType;
+    if(Object.keys(meta).length) body.metadata = meta;
 
     const data = await apiCall('POST', '/v1alpha/monitors', body);
     const { key, idx } = getActiveKey();
@@ -1055,6 +1133,8 @@ async function createMonitor() {
       freq,
       keyIdx: idx,
       keyLabel,
+      signalType,
+      customFields,
       status: data.status || 'active',
       created_at: data.created_at || new Date().toISOString()
     });
@@ -1063,6 +1143,8 @@ async function createMonitor() {
     toast('Signal created!', 'success');
     document.getElementById('monitorQuery').value = '';
     document.getElementById('monitorMeta').value = '';
+    document.getElementById('monitorSignalType').value = '';
+    toggleSignalTypeFields();
     renderMonitorsTable();
     updateStats();
     save();
@@ -1393,40 +1475,146 @@ async function fetchAndShowEvents(monitorId) {
 // ============================================================
 // RENDER: EVENTS TABLE
 // ============================================================
+function parseEventFields(event, monitor) {
+  // Try to extract structured fields from event output using simple regex patterns
+  const out = event.output || '';
+  const cf = monitor?.customFields;
+  if(!cf) return null;
+  const result = { type: cf.type };
+
+  if(cf.type === 'person') {
+    result.name = extractField(out, ['full name','name']) || '—';
+    result.title = extractField(out, ['title','role','position','job title']) || '—';
+    result.linkedin = extractUrl(out, 'linkedin') || '—';
+  } else if(cf.type === 'company') {
+    result.name = extractField(out, ['company name','company','organization']) || '—';
+    result.domain = extractUrl(out, '') || extractField(out, ['domain','website','url']) || '—';
+  }
+  return result;
+}
+
+function extractField(text, labels) {
+  for(const lbl of labels) {
+    const rx = new RegExp(lbl + '[:\s]+([^\n,;]+)', 'i');
+    const m = text.match(rx);
+    if(m) return m[1].trim().replace(/^["']|["']$/g,'');
+  }
+  return null;
+}
+
+function extractUrl(text, keyword) {
+  const rx = keyword
+    ? new RegExp('https?:\/\/[^\s<>"]*' + keyword + '[^\s<>"]*', 'i')
+    : /https?:\/\/[^\s<>"]+/i;
+  const m = text.match(rx);
+  return m ? m[0] : null;
+}
+
 function renderEventsTable() {
   const el = document.getElementById('eventsTable');
   if(!STATE.events.length) {
     el.innerHTML = '<div class="empty-state"><div class="icon">◌</div>No events yet</div>';
     return;
   }
+
+  // Group events by monitor to know their signal type
+  const monitorMap = {};
+  STATE.monitors.forEach(m => monitorMap[m.id] = m);
+
+  // Check if any event has a signal type
+  const hasTyped = STATE.events.some(e => monitorMap[e.monitorId]?.signalType);
+
   el.innerHTML = `<table>
     <thead><tr>
-      <th>Event group ID</th>
-      <th>Monitor query</th>
-      <th>Output</th>
-      <th>Event date</th>
-      <th>Sources</th>
+      <th>Type</th>
+      <th>Name</th>
+      <th>Title / Domain</th>
+      <th>LinkedIn / Domain URL</th>
+      <th>Event summary</th>
+      <th>Date</th>
+      <th>Source</th>
       <th>Details</th>
     </tr></thead>
     <tbody>
-    ${STATE.events.map((e,i) => `<tr>
-      <td class="id-cell">${e.event_group_id||'—'}</td>
-      <td class="query-cell" title="${escHtml(e.query||'')}">${escHtml((e.query||'').slice(0,40))}${(e.query||'').length>40?'…':''}</td>
-      <td class="event-output">${escHtml((e.output||'').slice(0,100))}${(e.output||'').length>100?'…':''}</td>
-      <td class="event-date">${e.event_date||'—'}</td>
-      <td>${(e.source_urls||[]).length > 0 ? `<a class="event-source" href="${e.source_urls[0]}" target="_blank">${shortenUrl(e.source_urls[0])}</a>${e.source_urls.length>1?` +${e.source_urls.length-1}`:''}` : '—'}</td>
-      <td><button class="btn btn-ghost btn-sm" onclick="showEventDetail(${i})">View</button></td>
-    </tr>`).join('')}
+    ${STATE.events.map((e,i) => {
+      const monitor = monitorMap[e.monitorId];
+      const fields = parseEventFields(e, monitor);
+      const stype = monitor?.signalType || '';
+      const typeBadge = stype === 'person'
+        ? '<span class="badge badge-running">person</span>'
+        : stype === 'company'
+        ? '<span class="badge badge-active">company</span>'
+        : '<span style="color:var(--text-dim);font-size:11px;">—</span>';
+
+      let nameCell = '—', titleCell = '—', linkedinCell = '—';
+      if(fields) {
+        nameCell = `<span style="color:var(--text);font-weight:500;">${escHtml(fields.name)}</span>`;
+        if(fields.type === 'person') {
+          titleCell = escHtml(fields.title);
+          linkedinCell = fields.linkedin !== '—'
+            ? `<a class="event-source" href="${escHtml(fields.linkedin)}" target="_blank">LinkedIn ↗</a>`
+            : '—';
+        } else if(fields.type === 'company') {
+          titleCell = escHtml(fields.domain);
+          linkedinCell = fields.domain !== '—' && fields.domain.startsWith('http')
+            ? `<a class="event-source" href="${escHtml(fields.domain)}" target="_blank">${escHtml(fields.domain)}</a>`
+            : escHtml(fields.domain);
+        }
+      }
+
+      return `<tr>
+        <td>${typeBadge}</td>
+        <td style="min-width:120px;">${nameCell}</td>
+        <td style="min-width:140px;font-size:11px;color:var(--text-muted);">${titleCell}</td>
+        <td style="min-width:100px;">${linkedinCell}</td>
+        <td class="event-output" style="min-width:180px;">${escHtml((e.output||'').slice(0,120))}${(e.output||'').length>120?'…':''}</td>
+        <td class="event-date">${e.event_date||'—'}</td>
+        <td>${(e.source_urls||[]).length > 0 ? `<a class="event-source" href="${e.source_urls[0]}" target="_blank">${shortenUrl(e.source_urls[0])}</a>` : '—'}</td>
+        <td><button class="btn btn-ghost btn-sm" onclick="showEventDetail(${i})">View</button></td>
+      </tr>`;
+    }).join('')}
     </tbody>
   </table>`;
 }
 function showEventDetail(idx) {
   const e = STATE.events[idx];
+  const monitorMap = {};
+  STATE.monitors.forEach(m => monitorMap[m.id] = m);
+  const monitor = monitorMap[e.monitorId];
+  const fields = parseEventFields(e, monitor);
+  const stype = monitor?.signalType;
+
+  let structuredBlock = '';
+  if(fields) {
+    const rows = stype === 'person'
+      ? [
+          ['Type', '<span class="badge badge-running">person</span>'],
+          ['Name', escHtml(fields.name)],
+          ['Title / Role', escHtml(fields.title)],
+          ['LinkedIn', fields.linkedin !== '—' ? `<a class="event-source" href="${escHtml(fields.linkedin)}" target="_blank">${escHtml(fields.linkedin)}</a>` : '—'],
+        ]
+      : [
+          ['Type', '<span class="badge badge-active">company</span>'],
+          ['Company name', escHtml(fields.name)],
+          ['Domain', fields.domain !== '—' && fields.domain.startsWith('http') ? `<a class="event-source" href="${escHtml(fields.domain)}" target="_blank">${escHtml(fields.domain)}</a>` : escHtml(fields.domain)],
+        ];
+
+    structuredBlock = `
+      <div style="margin-bottom:16px;padding:12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;">
+        <div style="font-size:10px;font-family:var(--mono);color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">Extracted fields</div>
+        ${rows.map(([k,v]) => `<div style="display:flex;gap:12px;margin-bottom:6px;font-size:12px;">
+          <span style="color:var(--text-dim);min-width:100px;flex-shrink:0;">${k}</span>
+          <span style="color:var(--text);">${v}</span>
+        </div>`).join('')}
+      </div>`;
+  }
+
   document.getElementById('eventModalBody').innerHTML = `
+    ${structuredBlock}
     <div class="form-row"><div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Event Group ID</div><div style="font-family:var(--mono);font-size:11px;color:var(--text-muted);">${e.event_group_id||'—'}</div></div>
     <div class="form-row"><div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Monitor ID</div><div style="font-family:var(--mono);font-size:11px;color:var(--text-muted);">${e.monitorId||'—'}</div></div>
     <div class="form-row"><div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Query</div><div style="font-size:12px;color:var(--text);">${escHtml(e.query||'')}</div></div>
-    <div class="form-row"><div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Output</div><div style="font-size:12px;color:var(--text);line-height:1.6;">${escHtml(e.output||'—')}</div></div>
+    <div class="form-row"><div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Full output</div><div style="font-size:12px;color:var(--text);line-height:1.6;white-space:pre-wrap;">${escHtml(e.output||'—')}</div></div>
     <div class="form-row"><div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">Event date</div><div style="font-family:var(--mono);font-size:11px;">${e.event_date||'—'}</div></div>
     ${(e.source_urls||[]).length ? `<div class="form-row"><div style="font-size:11px;color:var(--text-dim);margin-bottom:6px;">Sources</div>${(e.source_urls||[]).map(u=>`<div style="margin-bottom:4px;"><a class="event-source" href="${u}" target="_blank">${escHtml(u)}</a></div>`).join('')}</div>` : ''}
   `;
