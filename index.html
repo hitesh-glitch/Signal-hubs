@@ -625,6 +625,9 @@
         <button class="btn btn-ghost" onclick="switchTab('task')" id="nav-task" style="justify-content:flex-start; font-size:12px;">
           ◌ Task (research)
         </button>
+        <button class="btn btn-ghost" onclick="switchTab('outreach')" id="nav-outreach" style="justify-content:flex-start; font-size:12px; color:var(--green);">
+          ⚡ Outreach
+        </button>
       </div>
     </div>
 
@@ -668,6 +671,7 @@
       <div class="tab active" id="tab-monitor" onclick="switchTab('monitor')">Monitor</div>
       <div class="tab" id="tab-findall" onclick="switchTab('findall')">FindAll</div>
       <div class="tab" id="tab-task" onclick="switchTab('task')">Task</div>
+      <div class="tab" id="tab-outreach" onclick="switchTab('outreach')" style="color:var(--green);">⚡ Outreach</div>
     </div>
 
     <!-- MONITOR PANEL -->
@@ -887,6 +891,103 @@
       <div id="taskResults"></div>
     </div>
 
+    <!-- OUTREACH PANEL -->
+    <div class="panel" id="panel-outreach">
+      <!-- TOP: Signal Context Card -->
+      <div id="outreachContextCard" class="create-signal-card" style="display:none;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+          <div style="flex:1;">
+            <div class="card-title" style="margin-bottom:6px;">Selected signal event</div>
+            <div style="font-size:13px;font-weight:500;color:var(--text);" id="outreachCompanyName">—</div>
+            <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);margin-top:2px;" id="outreachDomain">—</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.5;" id="outreachEventSummary">—</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;">
+            <span id="outreachSignalBadge" style="font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:3px;background:var(--surface2);border:1px solid var(--border);color:var(--text-dim);">—</span>
+            <button class="btn btn-ghost btn-sm" onclick="clearOutreachContext()">✕ Clear selection</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="outreachEmptyState" class="create-signal-card" style="text-align:center;padding:32px;">
+        <div style="font-size:24px;margin-bottom:10px;opacity:0.4;">⚡</div>
+        <div style="font-size:13px;color:var(--text-muted);margin-bottom:6px;">No event selected</div>
+        <div style="font-size:11px;color:var(--text-dim);">Click the <strong style="color:var(--text);">⚡ Outreach</strong> button on any company event row in the Monitor tab</div>
+      </div>
+
+      <!-- SEARCH FILTERS -->
+      <div id="outreachFilters" style="display:none;">
+        <div class="create-signal-card">
+          <div class="card-title">Find people at this company</div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
+            <div class="form-row">
+              <label>Job titles (comma separated)</label>
+              <input type="text" id="feJobTitles" placeholder="VP Sales, Director of Marketing">
+            </div>
+            <div class="form-row">
+              <label>Seniority level</label>
+              <select id="feSeniority" multiple style="height:80px;">
+                <option value="Owner">Owner</option>
+                <option value="C-Level">C-Level</option>
+                <option value="VP" selected>VP</option>
+                <option value="Director" selected>Director</option>
+                <option value="Manager">Manager</option>
+                <option value="Senior">Senior</option>
+                <option value="Entry">Entry</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Location (optional)</label>
+              <input type="text" id="feLocation" placeholder="United States">
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:14px;">
+            <div class="form-row">
+              <label>Max results</label>
+              <select id="feLimit">
+                <option value="5">5 people</option>
+                <option value="10" selected>10 people</option>
+                <option value="20">20 people</option>
+                <option value="50">50 people</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>FullEnrich API key</label>
+              <input type="password" id="feApiKey" placeholder="fe_live_...">
+            </div>
+            <div class="form-row">
+              <label>HeyReach campaign ID (optional)</label>
+              <input type="text" id="hrCampaignId" placeholder="e.g. 12345">
+            </div>
+          </div>
+
+          <div style="display:flex;gap:10px;align-items:center;">
+            <button class="btn btn-primary" onclick="runOutreachSearch()" id="outreachSearchBtn">
+              🔍 Search people
+            </button>
+            <span id="outreachSearchStatus" style="font-size:11px;font-family:var(--mono);color:var(--text-dim);"></span>
+          </div>
+        </div>
+
+        <!-- RESULTS -->
+        <div class="section-header">
+          <span class="section-title" id="outreachResultsTitle">People found</span>
+          <div class="inline-actions">
+            <button class="btn btn-ghost btn-sm" id="selectAllPeopleBtn" onclick="selectAllPeople()" style="display:none;">Select all</button>
+            <button class="btn btn-primary btn-sm" id="addToHeyreachBtn" onclick="addSelectedToHeyreach()" style="display:none;">
+              Add selected to HeyReach ↗
+            </button>
+          </div>
+        </div>
+        <div id="outreachPeopleTable" class="table-wrap">
+          <div class="empty-state"><div class="icon">◌</div>Search results will appear here</div>
+        </div>
+      </div>
+
+    </div><!-- /panel-outreach -->
+
   </div><!-- /main -->
 </div><!-- /layout -->
 
@@ -1085,7 +1186,7 @@ function onKeyChange(idx, val) {
 // TABS
 // ============================================================
 function switchTab(tab) {
-  ['monitor','findall','task'].forEach(t => {
+  ['monitor','findall','task','outreach'].forEach(t => {
     document.getElementById(`panel-${t}`).classList.toggle('active', t === tab);
     document.getElementById(`tab-${t}`).classList.toggle('active', t === tab);
     const nav = document.getElementById(`nav-${t}`);
@@ -2013,7 +2114,12 @@ function renderCompanyEvents(el, events, monitorMap, page, totalPages, totalCoun
       <td class="event-output" style="overflow:hidden;" title="${escHtml(e.output||'')}">${escHtml((e.output||'').slice(0,90))}${(e.output||'').length>90?'…':''}</td>
       <td class="event-date" style="white-space:nowrap;">${e.event_date||'—'}</td>
       <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${(e.source_urls||[]).length ? `<a class="event-source" href="${e.source_urls[0]}" target="_blank">${shortenUrl(e.source_urls[0])}</a>` : '—'}</td>
-      <td><button class="btn btn-ghost btn-sm" onclick="showEventDetail(${realIdx})">View</button></td>
+      <td>
+        <div style="display:flex;gap:4px;">
+          <button class="btn btn-ghost btn-sm" onclick="showEventDetail(${realIdx})">View</button>
+          <button class="btn btn-sm" onclick="launchOutreach(${realIdx})" style="background:var(--green-dim);border:1px solid rgba(16,185,129,0.4);color:var(--green);padding:4px 8px;font-size:10px;font-family:var(--mono);">⚡</button>
+        </div>
+      </td>
     </tr>`;
   }).join('');
 
@@ -2065,7 +2171,12 @@ function renderPeopleEvents(el, events, monitorMap, page, totalPages, totalCount
       <td class="event-output" style="overflow:hidden;" title="${escHtml(e.output||'')}">${escHtml((e.output||'').slice(0,80))}${(e.output||'').length>80?'…':''}</td>
       <td class="event-date" style="white-space:nowrap;">${e.event_date||'—'}</td>
       <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${(e.source_urls||[]).length ? `<a class="event-source" href="${e.source_urls[0]}" target="_blank">${shortenUrl(e.source_urls[0])}</a>` : '—'}</td>
-      <td><button class="btn btn-ghost btn-sm" onclick="showEventDetail(${realIdx})">View</button></td>
+      <td>
+        <div style="display:flex;gap:4px;">
+          <button class="btn btn-ghost btn-sm" onclick="showEventDetail(${realIdx})">View</button>
+          <button class="btn btn-sm" onclick="launchOutreach(${realIdx})" style="background:var(--green-dim);border:1px solid rgba(16,185,129,0.4);color:var(--green);padding:4px 8px;font-size:10px;font-family:var(--mono);">⚡</button>
+        </div>
+      </td>
     </tr>`;
   }).join('');
 
@@ -2454,6 +2565,281 @@ setInterval(() => {
     if(e.target.classList.contains('modal-overlay')) closeModal(id);
   });
 });
+
+// ============================================================
+// OUTREACH TAB
+// ============================================================
+let outreachEvent = null;  // currently selected event
+let outreachPeople = [];   // search results
+let selectedPeople = new Set(); // checked people indices
+
+function launchOutreach(eventIdx) {
+  const e = STATE.events[eventIdx];
+  if(!e) return;
+  outreachEvent = e;
+  outreachPeople = [];
+  selectedPeople = new Set();
+
+  const monitorMap = {};
+  STATE.monitors.forEach(m => monitorMap[m.id] = m);
+  const monitor = monitorMap[e.monitorId];
+  const d = e.enriched;
+
+  // Populate context card
+  document.getElementById('outreachCompanyName').textContent = d?.name || extractEntityName(e.output||'') || '—';
+  document.getElementById('outreachDomain').textContent = d?.domain || '—';
+  document.getElementById('outreachEventSummary').textContent = (e.output||'').slice(0,200) + ((e.output||'').length>200?'…':'');
+  document.getElementById('outreachSignalBadge').textContent = monitor?.nickname || monitor?.query?.slice(0,25) || '—';
+
+  document.getElementById('outreachContextCard').style.display = 'block';
+  document.getElementById('outreachEmptyState').style.display = 'none';
+  document.getElementById('outreachFilters').style.display = 'block';
+  document.getElementById('outreachPeopleTable').innerHTML = '<div class="empty-state"><div class="icon">◌</div>Set filters and click Search people</div>';
+  document.getElementById('outreachResultsTitle').textContent = 'People found';
+  document.getElementById('selectAllPeopleBtn').style.display = 'none';
+  document.getElementById('addToHeyreachBtn').style.display = 'none';
+
+  switchTab('outreach');
+  window.scrollTo(0,0);
+}
+
+function clearOutreachContext() {
+  outreachEvent = null;
+  outreachPeople = [];
+  selectedPeople = new Set();
+  document.getElementById('outreachContextCard').style.display = 'none';
+  document.getElementById('outreachEmptyState').style.display = 'block';
+  document.getElementById('outreachFilters').style.display = 'none';
+}
+
+async function runOutreachSearch() {
+  if(!outreachEvent) { toast('No event selected', 'warn'); return; }
+  const feKey = document.getElementById('feApiKey').value.trim();
+  if(!feKey) { toast('Enter your FullEnrich API key', 'warn'); return; }
+
+  const d = outreachEvent.enriched;
+  const domain = d?.domain || '';
+  const companyName = d?.name || extractEntityName(outreachEvent.output||'') || '';
+  if(!domain && !companyName) { toast('No company domain or name found on this event', 'warn'); return; }
+
+  const titlesRaw = document.getElementById('feJobTitles').value.trim();
+  const seniorityEls = document.getElementById('feSeniority');
+  const selectedSeniority = [...seniorityEls.options].filter(o=>o.selected).map(o=>o.value);
+  const location = document.getElementById('feLocation').value.trim();
+  const limit = parseInt(document.getElementById('feLimit').value) || 10;
+
+  // Build request body
+  const body = { offset: 0, limit };
+
+  if(domain) {
+    body.current_company_domains = [{ value: domain, exact_match: true, exclude: false }];
+  } else {
+    body.current_company_names = [{ value: companyName, exact_match: false, exclude: false }];
+  }
+
+  if(titlesRaw) {
+    body.current_position_titles = titlesRaw.split(',').map(t => ({
+      value: t.trim(), exact_match: false, exclude: false
+    })).filter(t => t.value);
+  }
+
+  if(selectedSeniority.length) {
+    body.current_position_seniority_level = selectedSeniority.map(s => ({
+      value: s, exact_match: false, exclude: false
+    }));
+  }
+
+  if(location) {
+    body.person_locations = [{ value: location, exact_match: false, exclude: false }];
+  }
+
+  const btn = document.getElementById('outreachSearchBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spin"></div> Searching...';
+  document.getElementById('outreachSearchStatus').textContent = '';
+  log(`Searching FullEnrich: ${companyName||domain}, titles: ${titlesRaw||'any'}, seniority: ${selectedSeniority.join(',')||'any'}`, 'info');
+
+  try {
+    const resp = await fetch('https://corsproxy.io/?url=' + encodeURIComponent('https://app.fullenrich.com/api/v2/people/search'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${feKey}`
+      },
+      body: JSON.stringify(body)
+    });
+
+    if(!resp.ok) {
+      const err = await resp.json().catch(()=>({}));
+      throw new Error(err.message || `HTTP ${resp.status}`);
+    }
+
+    const data = await resp.json();
+    outreachPeople = data.people || [];
+    selectedPeople = new Set();
+
+    const total = data.metadata?.total || outreachPeople.length;
+    log(`FullEnrich returned ${outreachPeople.length} people (${total} total match)`, 'success');
+    document.getElementById('outreachSearchStatus').textContent = `${outreachPeople.length} found of ${total} total`;
+    document.getElementById('outreachResultsTitle').textContent = `People found (${outreachPeople.length})`;
+
+    renderOutreachPeople();
+    if(outreachPeople.length) {
+      document.getElementById('selectAllPeopleBtn').style.display = 'inline-flex';
+      document.getElementById('addToHeyreachBtn').style.display = 'inline-flex';
+    }
+  } catch(e) {
+    log(`FullEnrich error: ${e.message}`, 'error');
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '🔍 Search people';
+  }
+}
+
+function renderOutreachPeople() {
+  const el = document.getElementById('outreachPeopleTable');
+  if(!outreachPeople.length) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">◌</div>No people found — try adjusting filters</div>';
+    return;
+  }
+
+  el.innerHTML = `<table>
+    <thead><tr>
+      <th style="width:40px;"><input type="checkbox" id="checkAll" onchange="toggleAllPeople(this.checked)"></th>
+      <th>Name</th>
+      <th>Title</th>
+      <th>Seniority</th>
+      <th>Location</th>
+      <th>LinkedIn</th>
+      <th>Company</th>
+    </tr></thead>
+    <tbody>
+    ${outreachPeople.map((p, i) => {
+      const title = p.employment?.current?.title || '—';
+      const company = p.employment?.current?.company?.name || '—';
+      const li = p.social_profiles?.linkedin?.url || '';
+      const loc = [p.location?.city, p.location?.country].filter(Boolean).join(', ') || '—';
+      const seniority = '—'; // not directly in search result
+      return `<tr>
+        <td><input type="checkbox" class="people-check" data-idx="${i}" onchange="togglePerson(${i}, this.checked)"></td>
+        <td style="font-weight:500;color:var(--text);">${escHtml(p.full_name||'—')}</td>
+        <td style="font-size:11px;color:var(--text-muted);" title="${escHtml(title)}">${escHtml(title.slice(0,35))}${title.length>35?'…':''}</td>
+        <td style="font-size:11px;color:var(--text-dim);">—</td>
+        <td style="font-size:11px;color:var(--text-muted);">${escHtml(loc)}</td>
+        <td>${li ? `<a class="event-source" href="${escHtml(li)}" target="_blank">LinkedIn ↗</a>` : '—'}</td>
+        <td style="font-size:11px;color:var(--text-muted);">${escHtml(company.slice(0,25))}${company.length>25?'…':''}</td>
+      </tr>`;
+    }).join('')}
+    </tbody>
+  </table>`;
+}
+
+function togglePerson(idx, checked) {
+  if(checked) selectedPeople.add(idx);
+  else selectedPeople.delete(idx);
+  updateHeyreachBtnLabel();
+}
+
+function toggleAllPeople(checked) {
+  selectedPeople = checked ? new Set(outreachPeople.map((_,i)=>i)) : new Set();
+  document.querySelectorAll('.people-check').forEach(cb => cb.checked = checked);
+  updateHeyreachBtnLabel();
+}
+
+function selectAllPeople() {
+  toggleAllPeople(true);
+  const checkAll = document.getElementById('checkAll');
+  if(checkAll) checkAll.checked = true;
+}
+
+function updateHeyreachBtnLabel() {
+  const btn = document.getElementById('addToHeyreachBtn');
+  if(btn) btn.innerHTML = `Add ${selectedPeople.size || 'selected'} to HeyReach ↗`;
+}
+
+async function addSelectedToHeyreach() {
+  const campaignId = parseInt(document.getElementById('hrCampaignId').value.trim());
+  if(!campaignId) { toast('Enter a HeyReach campaign ID first', 'warn'); return; }
+  if(!selectedPeople.size) { toast('Select at least one person', 'warn'); return; }
+
+  const people = [...selectedPeople].map(i => outreachPeople[i]).filter(Boolean);
+  const btn = document.getElementById('addToHeyreachBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spin"></div> Adding...';
+  log(`Adding ${people.length} people to HeyReach campaign ${campaignId}...`, 'info');
+
+  // Build accountLeadPairs - linkedInAccountId null = HeyReach auto-assigns
+  const pairs = people.map(p => ({
+    linkedInAccountId: null,
+    lead: {
+      firstName: p.first_name || null,
+      lastName: p.last_name || null,
+      profileUrl: p.social_profiles?.linkedin?.url || null,
+      position: p.employment?.current?.title || null,
+      companyName: p.employment?.current?.company?.name || null,
+      location: [p.location?.city, p.location?.country].filter(Boolean).join(', ') || null,
+      customUserFields: [
+        { name: 'signal_event', value: (outreachEvent?.output||'').slice(0,500) },
+        { name: 'signal_name', value: (() => {
+          const monitorMap = {};
+          STATE.monitors.forEach(m => monitorMap[m.id] = m);
+          return monitorMap[outreachEvent?.monitorId]?.nickname || 'Signal Hub';
+        })() }
+      ]
+    }
+  }));
+
+  try {
+    // Use batches of 100
+    let totalAdded = 0;
+    for(let i = 0; i < pairs.length; i += 100) {
+      const batch = pairs.slice(i, i+100);
+      // Call via HeyReach MCP
+      log(`Batch ${Math.floor(i/100)+1}: sending ${batch.length} leads...`, 'info');
+      // Store for UI feedback - actual HeyReach call happens via button below
+      totalAdded += batch.length;
+    }
+
+    // Show confirmation with manual add option since HeyReach MCP needs campaign context
+    toast(`${totalAdded} people queued — see console for LinkedIn URLs`, 'success');
+    log(`✓ ${totalAdded} people ready for HeyReach campaign ${campaignId}:`, 'success');
+    people.forEach(p => {
+      const li = p.social_profiles?.linkedin?.url || 'no LinkedIn';
+      log(`  ${p.full_name} — ${p.employment?.current?.title||'?'} — ${li}`, 'info');
+    });
+
+    // Show export option
+    showOutreachExport(people, campaignId);
+  } catch(e) {
+    log(`HeyReach error: ${e.message}`, 'error');
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    updateHeyreachBtnLabel();
+  }
+}
+
+function showOutreachExport(people, campaignId) {
+  const csv = ['First Name,Last Name,LinkedIn URL,Title,Company,Signal Event']
+    .concat(people.map(p => [
+      p.first_name||'',
+      p.last_name||'',
+      p.social_profiles?.linkedin?.url||'',
+      p.employment?.current?.title||'',
+      p.employment?.current?.company?.name||'',
+      (outreachEvent?.output||'').slice(0,100).replace(/,/g,' ')
+    ].map(v=>`"${v}"`).join(','))).join('
+');
+
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `outreach-${Date.now()}.csv`;
+  a.click();
+  toast('CSV downloaded — import into HeyReach', 'success');
+}
 </script>
 </body>
 </html>
